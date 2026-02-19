@@ -11,26 +11,36 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from linkedin_action_center.storage.database import get_connection
+from linkedin_action_center.utils.logger import logger
+from linkedin_action_center.utils.errors import StorageError
 
 
 def persist_snapshot(snap: dict, db_path: Path | None = None) -> None:
     """Write the full snapshot dict into SQLite (upsert pattern)."""
-    conn = get_connection(db_path)
-    cur = conn.cursor()
-    now = datetime.now(tz=timezone.utc).isoformat()
+    try:
+        conn = get_connection(db_path)
+        cur = conn.cursor()
+        now = datetime.now(tz=timezone.utc).isoformat()
 
-    for acct in snap.get("accounts", []):
-        _upsert_account(cur, acct, now)
+        for acct in snap.get("accounts", []):
+            _upsert_account(cur, acct, now)
 
-        for camp in acct.get("campaigns", []):
-            _upsert_campaign(cur, acct["id"], camp, now)
-            _upsert_campaign_daily_metrics(cur, camp, now)
-            _upsert_creatives(cur, acct["id"], camp, now)
+            for camp in acct.get("campaigns", []):
+                _upsert_campaign(cur, acct["id"], camp, now)
+                _upsert_campaign_daily_metrics(cur, camp, now)
+                _upsert_creatives(cur, acct["id"], camp, now)
 
-        _upsert_demographics(cur, acct, snap.get("date_range", {}), now)
+            _upsert_demographics(cur, acct, snap.get("date_range", {}), now)
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+        conn.close()
+    except sqlite3.Error as e:
+        logger.error(f"Database error while persisting snapshot: {e}")
+        raise StorageError(
+            "Failed to persist snapshot to database",
+            operation="persist_snapshot",
+            table="multiple"
+        ) from e
 
 
 # Private upsert helpers

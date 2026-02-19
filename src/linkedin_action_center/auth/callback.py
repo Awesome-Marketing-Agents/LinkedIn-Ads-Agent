@@ -7,6 +7,7 @@ import time
 
 from linkedin_action_center.auth.manager import AuthManager
 from linkedin_action_center.core.config import OAUTH_STATE
+from linkedin_action_center.utils.logger import logger, log_auth_event
 
 app = FastAPI()
 auth_manager = AuthManager()
@@ -32,7 +33,7 @@ async def callback(request: Request):
         error_description = request.query_params.get("error_description")
         return HTMLResponse(content=f"<h1>Error: {error}</h1><p>{error_description}</p>", status_code=400)
 
-    print(f"Authorization code received: {code[:15]}...")
+    log_auth_event("Authorization code received", code[:15] + "...")
     auth_code_received = code
 
     return HTMLResponse(content="""
@@ -65,29 +66,29 @@ def start_auth_flow():
     4. Exchanges the code for an access token.
     """
     if auth_manager.is_authenticated():
-        print("Already authenticated. Checking token health...")
+        log_auth_event("Already authenticated", "Checking token health")
         auth_manager.check_token_health()
         return
 
     # Start FastAPI server in a background thread
     server_thread = Thread(target=run_callback_server, daemon=True)
     server_thread.start()
-    print("Callback server started in background.")
+    logger.info("Callback server started in background")
 
     # Generate and open the authorization URL
     auth_url = auth_manager.get_authorization_url()
-    print(f"Please authorize the application by visiting this URL in your browser:\n{auth_url}")
+    logger.info(f"Opening authorization URL in browser: {auth_url}")
     webbrowser.open(auth_url)
 
     # Wait for the callback to set the auth_code
-    print("Waiting for user authorization...")
+    logger.info("Waiting for user authorization...")
     while not auth_code_received:
         time.sleep(1)
 
-    print("Authorization complete. Exchanging code for token...")
+    log_auth_event("Authorization complete", "Exchanging code for token")
     auth_manager.exchange_code_for_token(auth_code_received)
 
-    print("Full authentication flow complete.")
+    log_auth_event("Full authentication flow complete")
 
 if __name__ == "__main__":
     start_auth_flow()

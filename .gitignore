@@ -7,3 +7,5 @@ personal-notes/
 tokens.json
 notebooks/
 data/
+logs/
+.pytest_cache/

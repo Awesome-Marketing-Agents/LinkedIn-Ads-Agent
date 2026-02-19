@@ -116,6 +116,14 @@ CREATE TABLE IF NOT EXISTS audience_demographics (
 """
 
 
+def init_database(db_path: Path | None = None) -> Path:
+    """Initialize database schema and return the database path."""
+    path = db_path or DATABASE_FILE
+    conn = get_connection(path)
+    conn.close()
+    return path
+
+
 def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
     """Return a connection with WAL journal mode and the schema applied."""
     path = db_path or DATABASE_FILE

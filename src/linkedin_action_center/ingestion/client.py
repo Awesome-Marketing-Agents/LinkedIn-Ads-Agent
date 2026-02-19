@@ -10,6 +10,12 @@ import requests
 
 from linkedin_action_center.auth.manager import AuthManager
 from linkedin_action_center.core.constants import API_BASE_URL, LINKEDIN_API_VERSION
+from linkedin_action_center.utils.logger import logger
+from linkedin_action_center.utils.errors import (
+    LinkedInAPIError,
+    RateLimitError,
+    DataFetchError,
+)
 
 
 class LinkedInClient:
@@ -43,9 +49,25 @@ class LinkedInClient:
 
         resp = requests.get(url, headers=self._headers())
         if not resp.ok:
-            print(f"  HTTP {resp.status_code} {resp.reason} -- {path}")
-            print(f"  {resp.text[:500]}")
-            resp.raise_for_status()
+            # Check for rate limiting
+            if resp.status_code == 429:
+                retry_after = resp.headers.get("Retry-After")
+                raise RateLimitError(
+                    endpoint=path,
+                    retry_after=int(retry_after) if retry_after else None
+                )
+            
+            # Log and raise general API error
+            logger.error(f"HTTP {resp.status_code} {resp.reason} -- {path}")
+            logger.error(f"Response: {resp.text[:500]}")
+            
+            raise LinkedInAPIError(
+                f"API request failed: {resp.reason}",
+                status_code=resp.status_code,
+                response_data=resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {"text": resp.text[:500]},
+                endpoint=path
+            )
+        
         return resp.json()
 
     def get_all_pages(

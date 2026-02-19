@@ -7,6 +7,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 
+from linkedin_action_center.utils.logger import logger, log_auth_event
+from linkedin_action_center.utils.errors import (
+    AuthenticationError,
+    TokenExpiredError,
+    LinkedInAPIError,
+)
 from linkedin_action_center.core.config import (
     LINKEDIN_CLIENT_ID,
     LINKEDIN_CLIENT_SECRET,
@@ -78,7 +84,15 @@ class AuthManager:
             url, data=payload,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
-        resp.raise_for_status()
+        
+        if not resp.ok:
+            raise AuthenticationError(
+                "Failed to exchange authorization code",
+                details={
+                    "status_code": resp.status_code,
+                    "response": resp.text[:500],
+                }
+            )
 
         self.tokens = resp.json()
         now = int(time.time())
@@ -93,7 +107,10 @@ class AuthManager:
     def refresh_access_token(self) -> dict:
         """Use the refresh token to obtain a new access token."""
         if "refresh_token" not in self.tokens:
-            raise ValueError("No refresh token found. Please re-authenticate.")
+            raise AuthenticationError(
+                "No refresh token found. Please re-authenticate.",
+                details={"tokens_file": str(self.tokens_file)}
+            )
 
         url = f"{OAUTH2_BASE_URL}/accessToken"
         payload = {
@@ -106,7 +123,15 @@ class AuthManager:
             url, data=payload,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
-        resp.raise_for_status()
+        
+        if not resp.ok:
+            raise AuthenticationError(
+                "Failed to refresh access token",
+                details={
+                    "status_code": resp.status_code,
+                    "response": resp.text[:500],
+                }
+            )
 
         new = resp.json()
         now = int(time.time())
@@ -134,11 +159,23 @@ class AuthManager:
         This is the primary method other modules should call.
         """
         if not self.tokens or "access_token" not in self.tokens:
-            raise ValueError("Not authenticated. Run the OAuth flow first.")
+            raise AuthenticationError(
+                "Not authenticated. Run the OAuth flow first.",
+                details={"tokens_file": str(self.tokens_file)}
+            )
 
         expires_at = self.tokens.get("access_token_expires_at", 0)
         if time.time() >= expires_at - _EXPIRY_BUFFER:
-            self.refresh_access_token()
+            try:
+                self.refresh_access_token()
+            except AuthenticationError:
+                raise TokenExpiredError(
+                    "Access token expired and refresh failed",
+                    token_info={
+                        "expires_at": expires_at,
+                        "current_time": int(time.time()),
+                    }
+                )
 
         return self.tokens["access_token"]
 
@@ -166,10 +203,10 @@ class AuthManager:
             resp.raise_for_status()
             info = resp.json()
             name = f"{info.get('localizedFirstName', '')} {info.get('localizedLastName', '')}".strip()
-            print(f"Token valid. Authenticated as: {name}")
+            log_auth_event("Token valid", f"Authenticated as: {name}")
             return True
         except requests.exceptions.HTTPError as exc:
-            print(f"Token validation failed: {exc.response.status_code}")
+            logger.error(f"Token validation failed: {exc.response.status_code}")
             return False
 
     def introspect_token(self) -> dict:

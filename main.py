@@ -182,19 +182,19 @@ def sync():
             camps = fetch_campaigns(client, acct_id)
             all_campaigns.extend(camps)
             logs.append(f"  Account {acct_id}: {len(camps)} campaigns")
-            for camp in camps:
-                crs = fetch_creatives(client, camp["id"])
-                all_creatives.extend(crs)
-            logs.append(f"  Account {acct_id}: {len(all_creatives)} creatives (cumulative)")
+            campaign_ids = [c["id"] for c in camps]
+            crs = fetch_creatives(client, acct_id, campaign_ids)
+            all_creatives.extend(crs)
+            logs.append(f"  Account {acct_id}: {len(crs)} creatives")
 
         # Fetch metrics
-        camp_metrics = fetch_campaign_metrics(client, [c["id"] for c in all_campaigns], str(date_start), str(today))
+        camp_metrics = fetch_campaign_metrics(client, [c["id"] for c in all_campaigns], date_start, today)
         logs.append(f"Campaign metric rows: {len(camp_metrics)}")
 
-        creative_metrics = fetch_creative_metrics(client, [c["id"] for c in all_creatives], str(date_start), str(today))
+        creative_metrics = fetch_creative_metrics(client, [c["id"] for c in all_campaigns], date_start, today)
         logs.append(f"Creative metric rows: {len(creative_metrics)}")
 
-        demographics = fetch_demographics(client, [c["id"] for c in all_campaigns], str(date_start), str(today))
+        demographics = fetch_demographics(client, [c["id"] for c in all_campaigns], date_start, today)
         logs.append(f"Demographic rows: {len(demographics)}")
 
         # Persist

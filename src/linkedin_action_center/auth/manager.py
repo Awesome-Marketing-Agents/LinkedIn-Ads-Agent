@@ -11,7 +11,6 @@ from linkedin_action_center.utils.logger import logger, log_auth_event
 from linkedin_action_center.utils.errors import (
     AuthenticationError,
     TokenExpiredError,
-    LinkedInAPIError,
 )
 from linkedin_action_center.core.config import (
     LINKEDIN_CLIENT_ID,

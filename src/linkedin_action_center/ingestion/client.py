@@ -14,7 +14,6 @@ from linkedin_action_center.utils.logger import logger
 from linkedin_action_center.utils.errors import (
     LinkedInAPIError,
     RateLimitError,
-    DataFetchError,
 )
 
 

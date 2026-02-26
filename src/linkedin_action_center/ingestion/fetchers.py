@@ -35,15 +35,10 @@ def fetch_campaigns(
     if statuses is None:
         statuses = ["ACTIVE", "PAUSED", "DRAFT"]
 
-    all_campaigns: list[dict] = []
-    for status in statuses:
-        params = f"q=search&search.status.values[0]={status}&search.test=false"
-        campaigns = client.get_all_pages(
-            f"/adAccounts/{account_id}/adCampaigns", params,
-        )
-        all_campaigns.extend(campaigns)
-
-    return all_campaigns
+    # LinkedIn REST API uses Restli query syntax: search=(status:(values:List(A,B,C)))
+    status_list = ",".join(statuses)
+    params = f"q=search&search=(status:(values:List({status_list})))"
+    return client.get_all_pages(f"/adAccounts/{account_id}/adCampaigns", params)
 
 
 def fetch_creatives(

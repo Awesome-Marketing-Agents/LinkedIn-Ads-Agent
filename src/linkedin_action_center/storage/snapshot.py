@@ -33,6 +33,8 @@ def _aggregate_metrics(rows: list[dict]) -> dict:
         "shares": 0,
         "follows": 0,
         "leads": 0,
+        "opens": 0,
+        "sends": 0,
     }
     for r in rows:
         agg["impressions"] += r.get("impressions", 0)
@@ -45,6 +47,8 @@ def _aggregate_metrics(rows: list[dict]) -> dict:
         agg["shares"] += r.get("shares", 0)
         agg["follows"] += r.get("follows", 0)
         agg["leads"] += r.get("oneClickLeads", 0)
+        agg["opens"] += r.get("opens", 0)
+        agg["sends"] += r.get("sends", 0)
 
     imp = agg["impressions"]
     clk = agg["clicks"]
@@ -81,6 +85,10 @@ def _daily_time_series(rows: list[dict]) -> list[dict]:
                 "likes": 0,
                 "comments": 0,
                 "shares": 0,
+                "follows": 0,
+                "leads": 0,
+                "opens": 0,
+                "sends": 0,
             }
         d = daily[date_key]
         d["impressions"] += r.get("impressions", 0)
@@ -91,6 +99,10 @@ def _daily_time_series(rows: list[dict]) -> list[dict]:
         d["likes"] += r.get("likes", 0)
         d["comments"] += r.get("comments", 0)
         d["shares"] += r.get("shares", 0)
+        d["follows"] += r.get("follows", 0)
+        d["leads"] += r.get("oneClickLeads", 0)
+        d["opens"] += r.get("opens", 0)
+        d["sends"] += r.get("sends", 0)
 
     result = []
     for d in sorted(daily.values(), key=lambda x: x["date"]):
@@ -131,7 +143,7 @@ def assemble_snapshot(
     creatives_list: list[dict],
     camp_metrics: list[dict],
     creat_metrics: list[dict],
-    demo_data: dict[str, list[dict]],
+    demo_data: dict,
     date_start: _dt.date,
     date_end: _dt.date,
 ) -> dict:
@@ -161,6 +173,18 @@ def assemble_snapshot(
         camp_urn = cr.get("campaign", "")
         creatives_by_campaign.setdefault(camp_urn, []).append(cr)
 
+    # Index campaigns by account (if caller provided _account_id tags)
+    campaigns_by_account_id: dict[int, list[dict]] = {}
+    for camp in campaigns_list:
+        acct_id = camp.get("_account_id")
+        if acct_id is None:
+            continue
+        try:
+            acct_id_int = int(acct_id)
+        except Exception:
+            continue
+        campaigns_by_account_id.setdefault(acct_id_int, []).append(camp)
+
     snapshot: dict = {
         "generated_at": datetime.now(tz=timezone.utc).isoformat(),
         "date_range": {
@@ -183,7 +207,13 @@ def assemble_snapshot(
             "audience_demographics": {},
         }
 
-        for camp in campaigns_list:
+        acct_id = acct.get("id")
+        acct_campaigns = campaigns_by_account_id.get(acct_id) if acct_id is not None else None
+        if acct_campaigns is None:
+            # Backwards compatibility: if caller didn't tag campaigns, include everything.
+            acct_campaigns = campaigns_list
+
+        for camp in acct_campaigns:
             camp_id = str(camp.get("id", ""))
             camp_urn = f"urn:li:sponsoredCampaign:{camp_id}"
 
@@ -241,9 +271,17 @@ def assemble_snapshot(
             acct_snapshot["campaigns"].append(camp_snapshot)
 
         # Audience demographics
-        for pivot, rows in demo_data.items():
-            key = pivot.lower().replace("member_", "")
-            acct_snapshot["audience_demographics"][key] = _top_demographics(rows)
+        acct_demo = None
+        if isinstance(demo_data, dict) and acct_id in demo_data and isinstance(demo_data.get(acct_id), dict):
+            acct_demo = demo_data.get(acct_id, {})
+        elif isinstance(demo_data, dict):
+            # Backwards compatibility: a single dict[pivot -> rows] reused for all accounts
+            acct_demo = demo_data
+
+        if isinstance(acct_demo, dict):
+            for pivot, rows in acct_demo.items():
+                key = str(pivot).lower().replace("member_", "")
+                acct_snapshot["audience_demographics"][key] = _top_demographics(rows or [])
 
         snapshot["accounts"].append(acct_snapshot)
 

@@ -88,16 +88,22 @@ def cmd_sync() -> None:
         print("No ad accounts found. Nothing to sync.")
         return
 
+    # CLI sync operates on a single ad account.
+    accounts = [accounts[0]]
     account_id = accounts[0]["id"]
 
     print("[2/6] Fetching campaigns...")
     campaigns = fetch_campaigns(client, account_id)
+    for c in campaigns:
+        c["_account_id"] = account_id
     print(f"      Found {len(campaigns)} campaign(s).\n")
 
     campaign_ids = [c["id"] for c in campaigns]
 
     print("[3/6] Fetching creatives...")
     creatives = fetch_creatives(client, account_id, campaign_ids)
+    for cr in creatives:
+        cr["_account_id"] = account_id
     print(f"      Found {len(creatives)} creative(s).\n")
 
     # 2. Fetch metrics

@@ -44,6 +44,7 @@ LAYOUT = """
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
     <style>
         :root {
             --ink:          #1a2332;
@@ -339,9 +340,13 @@ LAYOUT = """
         </nav>
         <div class="sidebar-section">Analysis</div>
         <nav>
+            <a href="/report/visual" class="{{ 'active' if active_page == 'visual' else '' }}">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 2v12h12"/><path d="M5 11l3-4 2 2 3-4"/></svg>
+                Visual Dashboard
+            </a>
             <a href="/report" class="{{ 'active' if active_page == 'report' else '' }}">
                 <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 2v12h12"/><path d="M5 10V8"/><path d="M8 10V6"/><path d="M11 10V4"/></svg>
-                Report
+                Report Tables
             </a>
             <a href="/status" class="{{ 'active' if active_page == 'status' else '' }}">
                 <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 1.5"/></svg>
@@ -616,6 +621,248 @@ def _render_table(rows: list[dict], columns: list[str], page: int, page_size: in
 
 
 # ---------------------------------------------------------------------------
+# Visual dashboard data preparation
+# ---------------------------------------------------------------------------
+
+def _prepare_kpi_data(snapshot: dict) -> dict:
+    """Aggregate top-level KPIs across all campaigns."""
+    totals = dict(spend=0.0, impressions=0, clicks=0, leads=0, conversions=0, landing_page_clicks=0,
+                  likes=0, comments=0, shares=0, follows=0)
+    campaign_count = 0
+    for acct in snapshot.get("accounts", []):
+        for camp in acct.get("campaigns", []):
+            campaign_count += 1
+            ms = camp.get("metrics_summary") or {}
+            for k in totals:
+                totals[k] += ms.get(k, 0) or 0
+    ctr = (totals["clicks"] / totals["impressions"] * 100) if totals["impressions"] else 0
+    cpc = (totals["spend"] / totals["clicks"]) if totals["clicks"] else 0
+    cpl = (totals["spend"] / totals["leads"]) if totals["leads"] else 0
+    return {**totals, "ctr": ctr, "cpc": cpc, "cpl": cpl, "campaign_count": campaign_count}
+
+
+def _prepare_timeseries_data(snapshot: dict) -> dict:
+    """Aggregate daily metrics across all campaigns by date."""
+    by_date: dict[str, dict] = {}
+    for acct in snapshot.get("accounts", []):
+        for camp in acct.get("campaigns", []):
+            for d in camp.get("daily_metrics") or []:
+                date = d.get("date", "")
+                if not date:
+                    continue
+                if date not in by_date:
+                    by_date[date] = dict(spend=0.0, impressions=0, clicks=0, conversions=0, leads=0)
+                by_date[date]["spend"] += (d.get("spend", 0) or 0)
+                by_date[date]["impressions"] += (d.get("impressions", 0) or 0)
+                by_date[date]["clicks"] += (d.get("clicks", 0) or 0)
+                by_date[date]["conversions"] += (d.get("conversions", 0) or 0)
+                by_date[date]["leads"] += (d.get("leads", 0) or 0)
+    dates = sorted(by_date.keys())
+    return {
+        "labels": dates,
+        "spend": [by_date[d]["spend"] for d in dates],
+        "impressions": [by_date[d]["impressions"] for d in dates],
+        "clicks": [by_date[d]["clicks"] for d in dates],
+        "conversions": [by_date[d]["conversions"] for d in dates],
+        "leads": [by_date[d]["leads"] for d in dates],
+    }
+
+
+def _prepare_campaign_comparison(snapshot: dict) -> dict:
+    """Per-campaign metrics for bar chart comparisons."""
+    campaigns = []
+    for acct in snapshot.get("accounts", []):
+        for camp in acct.get("campaigns", []):
+            ms = camp.get("metrics_summary") or {}
+            impressions = ms.get("impressions", 0) or 0
+            clicks = ms.get("clicks", 0) or 0
+            spend = ms.get("spend", 0) or 0
+            name = camp.get("name", f"Campaign {camp.get('id', '?')}")
+            if len(name) > 35:
+                name = name[:32] + "..."
+            campaigns.append({
+                "name": name,
+                "impressions": impressions,
+                "clicks": clicks,
+                "spend": round(spend, 2),
+                "ctr": round(clicks / impressions * 100, 2) if impressions else 0,
+                "cpc": round(spend / clicks, 2) if clicks else 0,
+                "conversions": ms.get("conversions", 0) or 0,
+                "leads": ms.get("leads", 0) or 0,
+            })
+    campaigns.sort(key=lambda c: c["spend"], reverse=True)
+    return {"campaigns": campaigns[:20]}
+
+
+def _prepare_demographics(snapshot: dict) -> dict:
+    """Collect demographic data across all accounts."""
+    all_demos: dict[str, list] = {}
+    dimension_labels = {
+        "jobtitle": "Job Title", "jobfunction": "Job Function",
+        "industry": "Industry", "seniority": "Seniority",
+        "company_size": "Company Size", "country_v2": "Country",
+    }
+    for acct in snapshot.get("accounts", []):
+        demos = acct.get("audience_demographics") or {}
+        for key, segments in demos.items():
+            if key not in all_demos:
+                all_demos[key] = []
+            all_demos[key].extend(segments or [])
+    # Merge duplicate segments and take top 10
+    result = {}
+    for key, segments in all_demos.items():
+        merged: dict[str, dict] = {}
+        for s in segments:
+            seg_name = s.get("segment", "Unknown")
+            if seg_name in merged:
+                merged[seg_name]["impressions"] += s.get("impressions", 0) or 0
+                merged[seg_name]["clicks"] += s.get("clicks", 0) or 0
+            else:
+                merged[seg_name] = {
+                    "segment": seg_name,
+                    "impressions": s.get("impressions", 0) or 0,
+                    "clicks": s.get("clicks", 0) or 0,
+                    "share": s.get("share_of_impressions", 0) or 0,
+                }
+        top = sorted(merged.values(), key=lambda x: x["impressions"], reverse=True)[:10]
+        result[key] = {
+            "label": dimension_labels.get(key, key),
+            "segments": [s["segment"] for s in top],
+            "impressions": [s["impressions"] for s in top],
+            "share": [round(s["share"], 1) for s in top],
+        }
+    return result
+
+
+def _prepare_budget_utilization(snapshot: dict) -> list[dict]:
+    """Budget utilization per campaign."""
+    items = []
+    for acct in snapshot.get("accounts", []):
+        for camp in acct.get("campaigns", []):
+            settings = camp.get("settings") or {}
+            try:
+                daily_budget = float(settings.get("daily_budget") or 0)
+            except (TypeError, ValueError):
+                continue
+            if not daily_budget:
+                continue
+            ms = camp.get("metrics_summary") or {}
+            spend = float(ms.get("spend", 0) or 0)
+            days_active = len(camp.get("daily_metrics") or [])
+            if days_active == 0:
+                continue
+            total_budget = daily_budget * days_active
+            utilization = (spend / total_budget * 100) if total_budget else 0
+            name = camp.get("name", f"Campaign {camp.get('id', '?')}")
+            if len(name) > 35:
+                name = name[:32] + "..."
+            items.append({
+                "name": name,
+                "daily_budget": round(daily_budget, 2),
+                "total_budget": round(total_budget, 2),
+                "spend": round(spend, 2),
+                "utilization": round(min(utilization, 100), 1),
+                "days_active": days_active,
+            })
+    items.sort(key=lambda x: x["utilization"], reverse=True)
+    return items[:15]
+
+
+def _prepare_spend_distribution(snapshot: dict) -> dict:
+    """Spend distribution across campaigns for donut chart."""
+    items = []
+    for acct in snapshot.get("accounts", []):
+        for camp in acct.get("campaigns", []):
+            ms = camp.get("metrics_summary") or {}
+            spend = ms.get("spend", 0) or 0
+            if spend <= 0:
+                continue
+            name = camp.get("name", f"Campaign {camp.get('id', '?')}")
+            if len(name) > 30:
+                name = name[:27] + "..."
+            items.append({"name": name, "spend": round(spend, 2)})
+    items.sort(key=lambda x: x["spend"], reverse=True)
+    # Group small campaigns into "Other" if more than 8
+    if len(items) > 8:
+        top = items[:7]
+        other_spend = sum(i["spend"] for i in items[7:])
+        top.append({"name": "Other", "spend": round(other_spend, 2)})
+        items = top
+    return {"labels": [i["name"] for i in items], "values": [i["spend"] for i in items]}
+
+
+def _prepare_funnel_data(snapshot: dict) -> dict:
+    """Conversion funnel across all campaigns."""
+    totals = dict(impressions=0, clicks=0, landing_page_clicks=0, conversions=0, leads=0)
+    for acct in snapshot.get("accounts", []):
+        for camp in acct.get("campaigns", []):
+            ms = camp.get("metrics_summary") or {}
+            for k in totals:
+                totals[k] += ms.get(k, 0) or 0
+    return totals
+
+
+def _prepare_engagement_radar(snapshot: dict) -> dict:
+    """Radar chart data for top campaigns by engagement quality."""
+    campaigns = []
+    for acct in snapshot.get("accounts", []):
+        for camp in acct.get("campaigns", []):
+            ms = camp.get("metrics_summary") or {}
+            impressions = ms.get("impressions", 0) or 0
+            clicks = ms.get("clicks", 0) or 0
+            spend = ms.get("spend", 0) or 0
+            if impressions == 0:
+                continue
+            likes = ms.get("likes", 0) or 0
+            comments = ms.get("comments", 0) or 0
+            shares = ms.get("shares", 0) or 0
+            follows = ms.get("follows", 0) or 0
+            conversions = ms.get("conversions", 0) or 0
+            social = likes + comments + shares + follows
+            name = camp.get("name", f"Campaign {camp.get('id', '?')}")
+            if len(name) > 25:
+                name = name[:22] + "..."
+            campaigns.append({
+                "name": name,
+                "ctr": clicks / impressions * 100,
+                "engagement_rate": (clicks + social) / impressions * 100,
+                "social_rate": social / impressions * 100,
+                "conversion_rate": conversions / clicks * 100 if clicks else 0,
+                "cpc_efficiency": min(100, 100 / (spend / clicks)) if clicks and spend else 0,
+            })
+    campaigns.sort(key=lambda c: c["engagement_rate"], reverse=True)
+    return {"campaigns": campaigns[:5]}
+
+
+def _prepare_creative_comparison(snapshot: dict) -> dict:
+    """Creative performance comparison data."""
+    creatives = []
+    for acct in snapshot.get("accounts", []):
+        for camp in acct.get("campaigns", []):
+            camp_name = camp.get("name", f"Campaign {camp.get('id', '?')}")
+            for cr in camp.get("creatives") or []:
+                ms = cr.get("metrics_summary") or {}
+                impressions = ms.get("impressions", 0) or 0
+                if impressions == 0:
+                    continue
+                clicks = ms.get("clicks", 0) or 0
+                spend = ms.get("spend", 0) or 0
+                cr_id = _extract_id(cr.get("id"))
+                label = f"{camp_name[:20]}/ Cr {cr_id}"
+                creatives.append({
+                    "label": label,
+                    "impressions": impressions,
+                    "clicks": clicks,
+                    "spend": round(spend, 2),
+                    "ctr": round(clicks / impressions * 100, 2) if impressions else 0,
+                    "conversions": ms.get("conversions", 0) or 0,
+                    "is_serving": cr.get("is_serving", False),
+                })
+    creatives.sort(key=lambda c: c["impressions"], reverse=True)
+    return {"creatives": creatives[:15]}
+
+
+# ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
 
@@ -641,8 +888,8 @@ def register_routes(app, auth_manager: AuthManager):
             <div class="action-card">
                 <div class="step-num">3</div>
                 <h3>Explore Reports</h3>
-                <p>Campaign daily metrics, summary rollups, and creative performance breakdowns.</p>
-                <a class="btn-ghost btn" href="/report">Open Report</a>
+                <p>Visual dashboard with charts, trends, and detailed data tables.</p>
+                <a class="btn-ghost btn" href="/report/visual">Visual Dashboard</a>
             </div>
             <div class="action-card">
                 <div class="step-num">4</div>
@@ -841,6 +1088,537 @@ def register_routes(app, auth_manager: AuthManager):
         badge = "badge-ok" if is_auth else "badge-err"
         label = "Healthy" if is_auth else "Action Required"
         return _render(html, page_title=f'System Status <span class="badge {badge}">{_h(label)}</span>', active_page="status")
+
+    @app.route("/report/visual")
+    def report_visual():
+        snap_path = _latest_snapshot_path()
+        if not snap_path:
+            return _render(
+                '<div class="card"><h3>No snapshot found</h3>'
+                '<p>Run a <a href="/sync">Sync</a> first to pull data.</p></div>',
+                page_title="Visual Dashboard", active_page="visual")
+
+        snapshot = json.loads(Path(snap_path).read_text(encoding="utf-8"))
+
+        kpi = _prepare_kpi_data(snapshot)
+        ts = _prepare_timeseries_data(snapshot)
+        comparison = _prepare_campaign_comparison(snapshot)
+        demographics = _prepare_demographics(snapshot)
+        budget = _prepare_budget_utilization(snapshot)
+        spend_dist = _prepare_spend_distribution(snapshot)
+        funnel = _prepare_funnel_data(snapshot)
+        radar = _prepare_engagement_radar(snapshot)
+        creatives = _prepare_creative_comparison(snapshot)
+
+        # Chart color palette
+        colors = [
+            "#2b6cb0", "#2d8a6e", "#d4940a", "#c4483e", "#6b46c1",
+            "#d53f8c", "#2c7a7b", "#c05621", "#5a67d8", "#38a169",
+        ]
+
+        html = f"""
+        <style>
+            .kpi-grid {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+                gap: var(--sp-4);
+                margin-bottom: var(--sp-6);
+            }}
+            .kpi-card {{
+                background: var(--paper-raised);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-lg);
+                padding: var(--sp-5);
+                text-align: center;
+            }}
+            .kpi-card .kpi-value {{
+                font-size: 26px;
+                font-weight: 700;
+                color: var(--ink);
+                letter-spacing: -.02em;
+                font-variant-numeric: tabular-nums;
+            }}
+            .kpi-card .kpi-label {{
+                font-size: 11px;
+                font-weight: 600;
+                text-transform: uppercase;
+                letter-spacing: .04em;
+                color: var(--ink-tertiary);
+                margin-top: var(--sp-1);
+            }}
+            .chart-grid {{
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: var(--sp-4);
+                margin-bottom: var(--sp-4);
+            }}
+            .chart-grid .full-width {{
+                grid-column: 1 / -1;
+            }}
+            .chart-card {{
+                background: var(--paper-raised);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-lg);
+                padding: var(--sp-6);
+            }}
+            .chart-card h3 {{
+                margin-bottom: var(--sp-4);
+                font-size: 13px;
+                font-weight: 600;
+            }}
+            .chart-container {{
+                position: relative;
+                width: 100%;
+            }}
+            .chart-container canvas {{
+                width: 100% !important;
+            }}
+            .funnel-bar {{
+                display: flex;
+                align-items: center;
+                margin-bottom: var(--sp-2);
+            }}
+            .funnel-bar .funnel-label {{
+                width: 140px;
+                font-size: 12px;
+                font-weight: 500;
+                color: var(--ink-secondary);
+                text-align: right;
+                padding-right: var(--sp-3);
+                flex-shrink: 0;
+            }}
+            .funnel-bar .funnel-track {{
+                flex: 1;
+                height: 32px;
+                background: var(--paper-inset);
+                border-radius: var(--radius-sm);
+                overflow: hidden;
+                position: relative;
+            }}
+            .funnel-bar .funnel-fill {{
+                height: 100%;
+                border-radius: var(--radius-sm);
+                display: flex;
+                align-items: center;
+                padding-left: var(--sp-3);
+                font-size: 12px;
+                font-weight: 600;
+                color: #fff;
+                min-width: 40px;
+                transition: width 0.6s ease;
+            }}
+            .funnel-bar .funnel-value {{
+                margin-left: var(--sp-2);
+                font-size: 12px;
+                font-weight: 600;
+                color: var(--ink);
+                white-space: nowrap;
+            }}
+            .budget-item {{
+                display: flex;
+                align-items: center;
+                margin-bottom: var(--sp-3);
+                gap: var(--sp-3);
+            }}
+            .budget-item .budget-name {{
+                width: 180px;
+                font-size: 12px;
+                font-weight: 500;
+                color: var(--ink-secondary);
+                text-align: right;
+                flex-shrink: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }}
+            .budget-item .budget-track {{
+                flex: 1;
+                height: 20px;
+                background: var(--paper-inset);
+                border-radius: 10px;
+                overflow: hidden;
+            }}
+            .budget-item .budget-fill {{
+                height: 100%;
+                border-radius: 10px;
+                transition: width 0.6s ease;
+            }}
+            .budget-item .budget-pct {{
+                width: 50px;
+                font-size: 12px;
+                font-weight: 600;
+                color: var(--ink);
+                text-align: right;
+            }}
+            .section-title {{
+                font-size: 16px;
+                font-weight: 700;
+                color: var(--ink);
+                margin: var(--sp-8) 0 var(--sp-4);
+                padding-bottom: var(--sp-2);
+                border-bottom: 1px solid var(--border);
+            }}
+            .section-title:first-child {{
+                margin-top: 0;
+            }}
+            .metric-selector {{
+                display: flex;
+                gap: var(--sp-2);
+                margin-bottom: var(--sp-3);
+                flex-wrap: wrap;
+            }}
+            .metric-btn {{
+                padding: 4px 12px;
+                border-radius: 12px;
+                font-size: 11px;
+                font-weight: 600;
+                cursor: pointer;
+                border: 1px solid var(--border-strong);
+                background: var(--paper-inset);
+                color: var(--ink-secondary);
+                transition: all .15s ease;
+            }}
+            .metric-btn.active {{
+                background: var(--brand);
+                color: #fff;
+                border-color: var(--brand);
+            }}
+            .metric-btn:hover {{
+                border-color: var(--brand);
+            }}
+            @media (max-width: 900px) {{
+                .chart-grid {{
+                    grid-template-columns: 1fr;
+                }}
+            }}
+        </style>
+
+        <p class="muted" style="margin-bottom: var(--sp-4)">
+            Snapshot: <code>{_h(str(snap_path.name))}</code> &middot;
+            {kpi['campaign_count']} campaigns &middot;
+            <a href="/report">View data tables</a>
+        </p>
+
+        <!-- ============ P0: KPI SCORECARDS ============ -->
+        <div class="section-title" style="margin-top:0">Performance Overview</div>
+        <div class="kpi-grid">
+            <div class="kpi-card">
+                <div class="kpi-value">${kpi['spend']:,.2f}</div>
+                <div class="kpi-label">Total Spend</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-value">{kpi['impressions']:,}</div>
+                <div class="kpi-label">Impressions</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-value">{kpi['clicks']:,}</div>
+                <div class="kpi-label">Clicks</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-value">{kpi['ctr']:.2f}%</div>
+                <div class="kpi-label">CTR</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-value">${kpi['cpc']:.2f}</div>
+                <div class="kpi-label">Avg CPC</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-value">{kpi['leads']:,}</div>
+                <div class="kpi-label">Leads</div>
+            </div>
+        </div>
+
+        <div class="chart-grid">
+
+        <!-- ============ P0: PERFORMANCE TRENDS ============ -->
+        <div class="chart-card full-width">
+            <h3>Performance Trends (Daily)</h3>
+            <div class="metric-selector" id="trend-metrics">
+                <button class="metric-btn active" data-dataset="0">Spend ($)</button>
+                <button class="metric-btn active" data-dataset="1">Impressions</button>
+                <button class="metric-btn" data-dataset="2">Clicks</button>
+                <button class="metric-btn" data-dataset="3">Conversions</button>
+                <button class="metric-btn" data-dataset="4">Leads</button>
+            </div>
+            <div class="chart-container"><canvas id="trendChart"></canvas></div>
+        </div>
+
+        <!-- ============ P0: CAMPAIGN COMPARISON ============ -->
+        <div class="chart-card full-width">
+            <h3>Campaign Comparison</h3>
+            <div class="metric-selector" id="compare-metrics">
+                <button class="metric-btn active" data-metric="spend">Spend ($)</button>
+                <button class="metric-btn" data-metric="impressions">Impressions</button>
+                <button class="metric-btn" data-metric="clicks">Clicks</button>
+                <button class="metric-btn" data-metric="ctr">CTR (%)</button>
+                <button class="metric-btn" data-metric="cpc">CPC ($)</button>
+                <button class="metric-btn" data-metric="conversions">Conversions</button>
+            </div>
+            <div class="chart-container"><canvas id="compareChart"></canvas></div>
+        </div>
+
+        <!-- ============ P1: SPEND DISTRIBUTION ============ -->
+        <div class="chart-card">
+            <h3>Spend Distribution</h3>
+            <div class="chart-container" style="max-width:380px;margin:0 auto"><canvas id="spendDonut"></canvas></div>
+        </div>
+
+        <!-- ============ P2: CONVERSION FUNNEL ============ -->
+        <div class="chart-card">
+            <h3>Conversion Funnel</h3>
+            <div id="funnelContainer" style="padding: var(--sp-2) 0"></div>
+        </div>
+
+        <!-- ============ P1: BUDGET UTILIZATION ============ -->
+        <div class="chart-card full-width">
+            <h3>Budget Utilization</h3>
+            <div id="budgetContainer"></div>
+        </div>
+
+        <!-- ============ P2: ENGAGEMENT RADAR ============ -->
+        <div class="chart-card">
+            <h3>Engagement Quality (Top 5 Campaigns)</h3>
+            <div class="chart-container"><canvas id="radarChart"></canvas></div>
+        </div>
+
+        <!-- ============ P2: CREATIVE PERFORMANCE ============ -->
+        <div class="chart-card">
+            <h3>Creative Performance</h3>
+            <div class="chart-container"><canvas id="creativeChart"></canvas></div>
+        </div>
+
+        </div><!-- end chart-grid -->
+
+        <!-- ============ P1: DEMOGRAPHICS ============ -->
+        <div class="section-title">Audience Demographics</div>
+        <div class="chart-grid" id="demoCharts"></div>
+
+        <script>
+        (function() {{
+            const COLORS = {json.dumps(colors)};
+
+            // ---- Trend Chart ----
+            const tsData = {json.dumps(ts)};
+            const trendCtx = document.getElementById('trendChart').getContext('2d');
+            const trendChart = new Chart(trendCtx, {{
+                type: 'line',
+                data: {{
+                    labels: tsData.labels,
+                    datasets: [
+                        {{ label: 'Spend ($)', data: tsData.spend, borderColor: COLORS[0], backgroundColor: COLORS[0]+'20', tension: 0.3, yAxisID: 'y', hidden: false, fill: true }},
+                        {{ label: 'Impressions', data: tsData.impressions, borderColor: COLORS[1], backgroundColor: COLORS[1]+'20', tension: 0.3, yAxisID: 'y1', hidden: false, fill: false }},
+                        {{ label: 'Clicks', data: tsData.clicks, borderColor: COLORS[2], backgroundColor: COLORS[2]+'20', tension: 0.3, yAxisID: 'y1', hidden: true, fill: false }},
+                        {{ label: 'Conversions', data: tsData.conversions, borderColor: COLORS[3], backgroundColor: COLORS[3]+'20', tension: 0.3, yAxisID: 'y1', hidden: true, fill: false }},
+                        {{ label: 'Leads', data: tsData.leads, borderColor: COLORS[4], backgroundColor: COLORS[4]+'20', tension: 0.3, yAxisID: 'y1', hidden: true, fill: false }},
+                    ]
+                }},
+                options: {{
+                    responsive: true,
+                    interaction: {{ mode: 'index', intersect: false }},
+                    plugins: {{ legend: {{ display: false }} }},
+                    scales: {{
+                        x: {{ ticks: {{ maxTicksLimit: 15, font: {{ size: 10 }} }} }},
+                        y: {{ position: 'left', title: {{ display: true, text: 'Spend ($)' }}, grid: {{ drawOnChartArea: true }} }},
+                        y1: {{ position: 'right', title: {{ display: true, text: 'Count' }}, grid: {{ drawOnChartArea: false }} }}
+                    }}
+                }}
+            }});
+
+            // Toggle trend datasets
+            document.getElementById('trend-metrics').addEventListener('click', function(e) {{
+                const btn = e.target.closest('.metric-btn');
+                if (!btn) return;
+                const idx = parseInt(btn.dataset.dataset);
+                btn.classList.toggle('active');
+                const meta = trendChart.getDatasetMeta(idx);
+                meta.hidden = !btn.classList.contains('active');
+                trendChart.update();
+            }});
+
+            // ---- Campaign Comparison ----
+            const cmpData = {json.dumps(comparison)};
+            const cmpCtx = document.getElementById('compareChart').getContext('2d');
+            const cmpLabels = cmpData.campaigns.map(c => c.name);
+            let currentMetric = 'spend';
+            const compareChart = new Chart(cmpCtx, {{
+                type: 'bar',
+                data: {{
+                    labels: cmpLabels,
+                    datasets: [{{
+                        label: 'Spend ($)',
+                        data: cmpData.campaigns.map(c => c.spend),
+                        backgroundColor: cmpData.campaigns.map((_, i) => COLORS[i % COLORS.length] + 'CC'),
+                        borderColor: cmpData.campaigns.map((_, i) => COLORS[i % COLORS.length]),
+                        borderWidth: 1
+                    }}]
+                }},
+                options: {{
+                    indexAxis: 'y',
+                    responsive: true,
+                    plugins: {{ legend: {{ display: false }} }},
+                    scales: {{ x: {{ beginAtZero: true }} }}
+                }}
+            }});
+
+            document.getElementById('compare-metrics').addEventListener('click', function(e) {{
+                const btn = e.target.closest('.metric-btn');
+                if (!btn) return;
+                this.querySelectorAll('.metric-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                const metric = btn.dataset.metric;
+                const metricLabels = {{ spend: 'Spend ($)', impressions: 'Impressions', clicks: 'Clicks', ctr: 'CTR (%)', cpc: 'CPC ($)', conversions: 'Conversions' }};
+                compareChart.data.datasets[0].data = cmpData.campaigns.map(c => c[metric]);
+                compareChart.data.datasets[0].label = metricLabels[metric] || metric;
+                compareChart.update();
+            }});
+
+            // ---- Spend Distribution Donut ----
+            const spendData = {json.dumps(spend_dist)};
+            new Chart(document.getElementById('spendDonut').getContext('2d'), {{
+                type: 'doughnut',
+                data: {{
+                    labels: spendData.labels,
+                    datasets: [{{
+                        data: spendData.values,
+                        backgroundColor: spendData.labels.map((_, i) => COLORS[i % COLORS.length] + 'CC'),
+                        borderColor: '#fff',
+                        borderWidth: 2
+                    }}]
+                }},
+                options: {{
+                    responsive: true,
+                    plugins: {{
+                        legend: {{ position: 'bottom', labels: {{ font: {{ size: 11 }}, padding: 12 }} }},
+                        tooltip: {{ callbacks: {{ label: function(ctx) {{ return ctx.label + ': $' + ctx.parsed.toLocaleString(); }} }} }}
+                    }}
+                }}
+            }});
+
+            // ---- Conversion Funnel (CSS) ----
+            const funnel = {json.dumps(funnel)};
+            const funnelStages = [
+                {{ key: 'impressions', label: 'Impressions', color: COLORS[0] }},
+                {{ key: 'clicks', label: 'Clicks', color: COLORS[1] }},
+                {{ key: 'landing_page_clicks', label: 'Landing Page', color: COLORS[2] }},
+                {{ key: 'conversions', label: 'Conversions', color: COLORS[3] }},
+                {{ key: 'leads', label: 'Leads', color: COLORS[4] }}
+            ];
+            const funnelMax = funnel.impressions || 1;
+            const funnelEl = document.getElementById('funnelContainer');
+            funnelStages.forEach(function(s) {{
+                const val = funnel[s.key] || 0;
+                const pct = Math.max(2, val / funnelMax * 100);
+                funnelEl.innerHTML += '<div class="funnel-bar">' +
+                    '<div class="funnel-label">' + s.label + '</div>' +
+                    '<div class="funnel-track"><div class="funnel-fill" style="width:' + pct + '%;background:' + s.color + '">' +
+                    '</div></div>' +
+                    '<div class="funnel-value">' + val.toLocaleString() + '</div></div>';
+            }});
+
+            // ---- Budget Utilization (CSS bars) ----
+            const budgetItems = {json.dumps(budget)};
+            const budgetEl = document.getElementById('budgetContainer');
+            if (budgetItems.length === 0) {{
+                budgetEl.innerHTML = '<p class="muted">No campaigns with daily budget data.</p>';
+            }} else {{
+                budgetItems.forEach(function(b) {{
+                    const color = b.utilization > 95 ? '#c4483e' : b.utilization > 70 ? '#2d8a6e' : b.utilization > 40 ? '#d4940a' : '#a0aec0';
+                    budgetEl.innerHTML += '<div class="budget-item">' +
+                        '<div class="budget-name" title="' + b.name + '">' + b.name + '</div>' +
+                        '<div class="budget-track"><div class="budget-fill" style="width:' + b.utilization + '%;background:' + color + '"></div></div>' +
+                        '<div class="budget-pct">' + b.utilization + '%</div></div>';
+                }});
+            }}
+
+            // ---- Engagement Radar ----
+            const radarData = {json.dumps(radar)};
+            if (radarData.campaigns.length > 0) {{
+                new Chart(document.getElementById('radarChart').getContext('2d'), {{
+                    type: 'radar',
+                    data: {{
+                        labels: ['CTR', 'Engagement Rate', 'Social Rate', 'Conversion Rate', 'CPC Efficiency'],
+                        datasets: radarData.campaigns.map(function(c, i) {{
+                            return {{
+                                label: c.name,
+                                data: [c.ctr, c.engagement_rate, c.social_rate, c.conversion_rate, c.cpc_efficiency],
+                                borderColor: COLORS[i % COLORS.length],
+                                backgroundColor: COLORS[i % COLORS.length] + '20',
+                                pointBackgroundColor: COLORS[i % COLORS.length],
+                                borderWidth: 2
+                            }};
+                        }})
+                    }},
+                    options: {{
+                        responsive: true,
+                        plugins: {{ legend: {{ position: 'bottom', labels: {{ font: {{ size: 10 }}, padding: 8 }} }} }},
+                        scales: {{ r: {{ beginAtZero: true, ticks: {{ font: {{ size: 9 }} }} }} }}
+                    }}
+                }});
+            }} else {{
+                document.getElementById('radarChart').parentElement.innerHTML = '<p class="muted">Not enough campaign data for radar chart.</p>';
+            }}
+
+            // ---- Creative Performance ----
+            const crData = {json.dumps(creatives)};
+            if (crData.creatives.length > 0) {{
+                new Chart(document.getElementById('creativeChart').getContext('2d'), {{
+                    type: 'bar',
+                    data: {{
+                        labels: crData.creatives.map(c => c.label),
+                        datasets: [
+                            {{ label: 'Impressions', data: crData.creatives.map(c => c.impressions), backgroundColor: COLORS[0] + 'AA' }},
+                            {{ label: 'Clicks', data: crData.creatives.map(c => c.clicks), backgroundColor: COLORS[1] + 'AA' }}
+                        ]
+                    }},
+                    options: {{
+                        indexAxis: 'y',
+                        responsive: true,
+                        plugins: {{ legend: {{ position: 'top', labels: {{ font: {{ size: 10 }} }} }} }},
+                        scales: {{ x: {{ beginAtZero: true }} }}
+                    }}
+                }});
+            }} else {{
+                document.getElementById('creativeChart').parentElement.innerHTML = '<p class="muted">No creative performance data available.</p>';
+            }}
+
+            // ---- Demographics ----
+            const demoData = {json.dumps(demographics)};
+            const demoContainer = document.getElementById('demoCharts');
+            const demoKeys = Object.keys(demoData);
+            if (demoKeys.length === 0) {{
+                demoContainer.innerHTML = '<div class="chart-card full-width"><p class="muted">No demographic data available. Run a sync to fetch audience data.</p></div>';
+            }}
+            demoKeys.forEach(function(key, idx) {{
+                const d = demoData[key];
+                const card = document.createElement('div');
+                card.className = 'chart-card';
+                card.innerHTML = '<h3>' + d.label + '</h3><div class="chart-container"><canvas id="demo_' + key + '"></canvas></div>';
+                demoContainer.appendChild(card);
+                new Chart(document.getElementById('demo_' + key).getContext('2d'), {{
+                    type: 'bar',
+                    data: {{
+                        labels: d.segments,
+                        datasets: [{{
+                            label: 'Impressions',
+                            data: d.impressions,
+                            backgroundColor: COLORS[idx % COLORS.length] + 'AA',
+                            borderColor: COLORS[idx % COLORS.length],
+                            borderWidth: 1
+                        }}]
+                    }},
+                    options: {{
+                        indexAxis: 'y',
+                        responsive: true,
+                        plugins: {{ legend: {{ display: false }} }},
+                        scales: {{ x: {{ beginAtZero: true }} }}
+                    }}
+                }});
+            }});
+        }})();
+        </script>
+        """
+
+        return _render(html, page_title="Visual Dashboard", active_page="visual")
 
     @app.route("/report")
     def report():

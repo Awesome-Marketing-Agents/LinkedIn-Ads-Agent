@@ -624,17 +624,39 @@ def _render_table(rows: list[dict], columns: list[str], page: int, page_size: in
 # Visual dashboard data preparation
 # ---------------------------------------------------------------------------
 
+def _dedup_campaigns(snapshot: dict) -> list[dict]:
+    """Return deduplicated campaigns (first occurrence of each campaign ID wins)."""
+    seen: set[str] = set()
+    out: list[dict] = []
+    for acct in snapshot.get("accounts", []):
+        for camp in acct.get("campaigns", []):
+            cid = str(camp.get("id", ""))
+            if cid in seen:
+                continue
+            seen.add(cid)
+            out.append(camp)
+    return out
+
+
+def _dedup_demographics(snapshot: dict) -> dict:
+    """Return demographics from the first account that has them."""
+    for acct in snapshot.get("accounts", []):
+        demos = acct.get("audience_demographics") or {}
+        if demos:
+            return demos
+    return {}
+
+
 def _prepare_kpi_data(snapshot: dict) -> dict:
     """Aggregate top-level KPIs across all campaigns."""
     totals = dict(spend=0.0, impressions=0, clicks=0, leads=0, conversions=0, landing_page_clicks=0,
                   likes=0, comments=0, shares=0, follows=0)
-    campaign_count = 0
-    for acct in snapshot.get("accounts", []):
-        for camp in acct.get("campaigns", []):
-            campaign_count += 1
-            ms = camp.get("metrics_summary") or {}
-            for k in totals:
-                totals[k] += ms.get(k, 0) or 0
+    campaigns = _dedup_campaigns(snapshot)
+    campaign_count = len(campaigns)
+    for camp in campaigns:
+        ms = camp.get("metrics_summary") or {}
+        for k in totals:
+            totals[k] += ms.get(k, 0) or 0
     ctr = (totals["clicks"] / totals["impressions"] * 100) if totals["impressions"] else 0
     cpc = (totals["spend"] / totals["clicks"]) if totals["clicks"] else 0
     cpl = (totals["spend"] / totals["leads"]) if totals["leads"] else 0
@@ -644,9 +666,8 @@ def _prepare_kpi_data(snapshot: dict) -> dict:
 def _prepare_timeseries_data(snapshot: dict) -> dict:
     """Aggregate daily metrics across all campaigns by date."""
     by_date: dict[str, dict] = {}
-    for acct in snapshot.get("accounts", []):
-        for camp in acct.get("campaigns", []):
-            for d in camp.get("daily_metrics") or []:
+    for camp in _dedup_campaigns(snapshot):
+        for d in camp.get("daily_metrics") or []:
                 date = d.get("date", "")
                 if not date:
                     continue
@@ -671,8 +692,7 @@ def _prepare_timeseries_data(snapshot: dict) -> dict:
 def _prepare_campaign_comparison(snapshot: dict) -> dict:
     """Per-campaign metrics for bar chart comparisons."""
     campaigns = []
-    for acct in snapshot.get("accounts", []):
-        for camp in acct.get("campaigns", []):
+    for camp in _dedup_campaigns(snapshot):
             ms = camp.get("metrics_summary") or {}
             impressions = ms.get("impressions", 0) or 0
             clicks = ms.get("clicks", 0) or 0
@@ -695,20 +715,13 @@ def _prepare_campaign_comparison(snapshot: dict) -> dict:
 
 
 def _prepare_demographics(snapshot: dict) -> dict:
-    """Collect demographic data across all accounts."""
-    all_demos: dict[str, list] = {}
+    """Collect demographic data (deduplicated — first account with data wins)."""
+    all_demos = _dedup_demographics(snapshot)
     dimension_labels = {
         "jobtitle": "Job Title", "jobfunction": "Job Function",
         "industry": "Industry", "seniority": "Seniority",
         "company_size": "Company Size", "country_v2": "Country",
     }
-    for acct in snapshot.get("accounts", []):
-        demos = acct.get("audience_demographics") or {}
-        for key, segments in demos.items():
-            if key not in all_demos:
-                all_demos[key] = []
-            all_demos[key].extend(segments or [])
-    # Merge duplicate segments and take top 10
     result = {}
     for key, segments in all_demos.items():
         merged: dict[str, dict] = {}
@@ -737,8 +750,7 @@ def _prepare_demographics(snapshot: dict) -> dict:
 def _prepare_budget_utilization(snapshot: dict) -> list[dict]:
     """Budget utilization per campaign."""
     items = []
-    for acct in snapshot.get("accounts", []):
-        for camp in acct.get("campaigns", []):
+    for camp in _dedup_campaigns(snapshot):
             settings = camp.get("settings") or {}
             try:
                 daily_budget = float(settings.get("daily_budget") or 0)
@@ -771,8 +783,7 @@ def _prepare_budget_utilization(snapshot: dict) -> list[dict]:
 def _prepare_spend_distribution(snapshot: dict) -> dict:
     """Spend distribution across campaigns for donut chart."""
     items = []
-    for acct in snapshot.get("accounts", []):
-        for camp in acct.get("campaigns", []):
+    for camp in _dedup_campaigns(snapshot):
             ms = camp.get("metrics_summary") or {}
             spend = ms.get("spend", 0) or 0
             if spend <= 0:
@@ -794,8 +805,7 @@ def _prepare_spend_distribution(snapshot: dict) -> dict:
 def _prepare_funnel_data(snapshot: dict) -> dict:
     """Conversion funnel across all campaigns."""
     totals = dict(impressions=0, clicks=0, landing_page_clicks=0, conversions=0, leads=0)
-    for acct in snapshot.get("accounts", []):
-        for camp in acct.get("campaigns", []):
+    for camp in _dedup_campaigns(snapshot):
             ms = camp.get("metrics_summary") or {}
             for k in totals:
                 totals[k] += ms.get(k, 0) or 0
@@ -805,8 +815,7 @@ def _prepare_funnel_data(snapshot: dict) -> dict:
 def _prepare_engagement_radar(snapshot: dict) -> dict:
     """Radar chart data for top campaigns by engagement quality."""
     campaigns = []
-    for acct in snapshot.get("accounts", []):
-        for camp in acct.get("campaigns", []):
+    for camp in _dedup_campaigns(snapshot):
             ms = camp.get("metrics_summary") or {}
             impressions = ms.get("impressions", 0) or 0
             clicks = ms.get("clicks", 0) or 0
@@ -837,27 +846,26 @@ def _prepare_engagement_radar(snapshot: dict) -> dict:
 def _prepare_creative_comparison(snapshot: dict) -> dict:
     """Creative performance comparison data."""
     creatives = []
-    for acct in snapshot.get("accounts", []):
-        for camp in acct.get("campaigns", []):
-            camp_name = camp.get("name", f"Campaign {camp.get('id', '?')}")
-            for cr in camp.get("creatives") or []:
-                ms = cr.get("metrics_summary") or {}
-                impressions = ms.get("impressions", 0) or 0
-                if impressions == 0:
-                    continue
-                clicks = ms.get("clicks", 0) or 0
-                spend = ms.get("spend", 0) or 0
-                cr_id = _extract_id(cr.get("id"))
-                label = f"{camp_name[:20]}/ Cr {cr_id}"
-                creatives.append({
-                    "label": label,
-                    "impressions": impressions,
-                    "clicks": clicks,
-                    "spend": round(spend, 2),
-                    "ctr": round(clicks / impressions * 100, 2) if impressions else 0,
-                    "conversions": ms.get("conversions", 0) or 0,
-                    "is_serving": cr.get("is_serving", False),
-                })
+    for camp in _dedup_campaigns(snapshot):
+        camp_name = camp.get("name", f"Campaign {camp.get('id', '?')}")
+        for cr in camp.get("creatives") or []:
+            ms = cr.get("metrics_summary") or {}
+            impressions = ms.get("impressions", 0) or 0
+            if impressions == 0:
+                continue
+            clicks = ms.get("clicks", 0) or 0
+            spend = ms.get("spend", 0) or 0
+            cr_id = _extract_id(cr.get("id"))
+            label = f"{camp_name[:20]}/ Cr {cr_id}"
+            creatives.append({
+                "label": label,
+                "impressions": impressions,
+                "clicks": clicks,
+                "spend": round(spend, 2),
+                "ctr": round(clicks / impressions * 100, 2) if impressions else 0,
+                "conversions": ms.get("conversions", 0) or 0,
+                "is_serving": cr.get("is_serving", False),
+            })
     creatives.sort(key=lambda c: c["impressions"], reverse=True)
     return {"creatives": creatives[:15]}
 

@@ -75,6 +75,7 @@ class LinkedInClient:
         params_str: str = "",
         key: str = "elements",
         page_size: int = 100,
+        use_cursor: bool = False,
     ) -> list[dict]:
         """
         Paginate through *all* results for a LinkedIn REST endpoint.
@@ -88,11 +89,17 @@ class LinkedInClient:
 
         while True:
             sep = "&" if params_str else ""
-            if page_token:
-                paged = f"{params_str}{sep}pageToken={page_token}&count={page_size}"
-            else:
-                paged = f"{params_str}{sep}start={start}&count={page_size}"
+            if use_cursor:
+                if page_token:
+                    paged = f"{params_str}{sep}pageToken={page_token}&count={page_size}"
+                else:
+                    paged = f"{params_str}{sep}start={start}&count={page_size}"
 
+            else:
+                if page_token:
+                    paged = f"{params_str}{sep}pageToken={page_token}&count={page_size}"
+                else:
+                    paged = f"{params_str}{sep}start={start}&count={page_size}"
             data = self.get(path, paged)
             items = data.get(key, [])
             all_items.extend(items)
@@ -103,9 +110,31 @@ class LinkedInClient:
 
             if next_token:
                 page_token = next_token
+            elif use_cursor:
+                break
             elif len(items) == page_size:
                 start += page_size
             else:
                 break
 
         return all_items
+
+    def post(self, path: str) -> dict:
+        """
+        POST to ``{API_BASE_URL}{path}`` with JSON body.
+
+        Raises on non-2xx responses after printing diagnostic info.
+        """
+        url = f"{API_BASE_URL}{path}"
+        resp = requests.post(url, headers=self._headers())
+        if not resp.ok:
+            logger.error(f"HTTP {resp.status_code} {resp.reason} -- {path}")
+            logger.error(f"Response: {resp.text[:500]}")
+            raise LinkedInAPIError(
+                f"API request failed: {resp.reason}",
+                status_code=resp.status_code,
+                response_data=resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {"text": resp.text[:500]},
+                endpoint=path
+            )
+        
+        return resp.json()

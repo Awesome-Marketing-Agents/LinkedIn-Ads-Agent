@@ -21,6 +21,7 @@ from linkedin_action_center.ingestion.metrics import (
     fetch_campaign_metrics,
     fetch_creative_metrics,
     fetch_demographics,
+    resolve_demographic_urns,
 )
 from linkedin_action_center.storage.snapshot import assemble_snapshot, save_snapshot_json
 from linkedin_action_center.storage.repository import (
@@ -442,6 +443,8 @@ def _flatten_campaign_daily(snapshot: dict) -> list[dict]:
                 shares = d.get("shares", 0) or 0
                 follows = d.get("follows", 0) or 0
                 leads = d.get("leads", 0) or 0
+                opens = d.get("opens", 0) or 0
+                sends = d.get("sends", 0) or 0
                 social_actions = likes + comments + shares + follows
                 engagements = clicks + social_actions
                 cpm = (float(spend) / impressions * 1000.0) if impressions else 0.0
@@ -450,6 +453,7 @@ def _flatten_campaign_daily(snapshot: dict) -> list[dict]:
                 cpc = d.get("cpc", 0.0) or 0.0
                 ctr = d.get("ctr", 0.0) or 0.0
                 cpa = (float(spend) / conversions) if conversions else 0.0
+                cpl = (float(spend) / leads) if leads else 0.0
                 out.append({
                     "Start Date (in UTC)": d.get("date", ""),
                     "Account Name": acct_name,
@@ -473,6 +477,9 @@ def _flatten_campaign_daily(snapshot: dict) -> list[dict]:
                     "Shares": shares,
                     "Follows": follows,
                     "Leads": leads,
+                    "Cost per Lead": cpl,
+                    "Opens": opens,
+                    "Sends": sends,
                     "Clicks to Landing Page": d.get("landing_page_clicks", 0) or 0,
                     "Conversions": conversions,
                     "Cost per Conversion": cpa,
@@ -502,11 +509,14 @@ def _flatten_campaign_summary(snapshot: dict) -> list[dict]:
             shares = ms.get("shares", 0) or 0
             follows = ms.get("follows", 0) or 0
             leads = ms.get("leads", 0) or 0
+            opens = ms.get("opens", 0) or 0
+            sends = ms.get("sends", 0) or 0
             conversions = ms.get("conversions", 0) or 0
             social_actions = likes + comments + shares + follows
             engagements = clicks + social_actions
             engagement_rate = (engagements / impressions * 100.0) if impressions else 0.0
             cpa = (float(spend) / conversions) if conversions else 0.0
+            cpl = (float(spend) / leads) if leads else 0.0
             out.append({
                 "Account Name": acct_name,
                 "Currency": currency,
@@ -529,6 +539,9 @@ def _flatten_campaign_summary(snapshot: dict) -> list[dict]:
                 "Shares": shares,
                 "Follows": follows,
                 "Leads": leads,
+                "Cost per Lead": cpl,
+                "Opens": opens,
+                "Sends": sends,
                 "Clicks to Landing Page": ms.get("landing_page_clicks", 0) or 0,
                 "Conversions": conversions,
                 "Cost per Conversion": cpa,
@@ -547,6 +560,9 @@ def _flatten_creative_summary(snapshot: dict) -> list[dict]:
         for camp in acct.get("campaigns", []):
             for cr in camp.get("creatives", []) or []:
                 ms = cr.get("metrics_summary", {}) or {}
+                leads = ms.get("leads", 0) or 0
+                spend = ms.get("spend", 0.0) or 0.0
+                cpl = (float(spend) / leads) if leads else 0.0
                 out.append({
                     "Account Name": acct_name,
                     "Currency": currency,
@@ -557,7 +573,9 @@ def _flatten_creative_summary(snapshot: dict) -> list[dict]:
                     "Creative Is Serving": cr.get("is_serving", False),
                     "Serving Hold Reasons": ", ".join([str(x) for x in (cr.get("serving_hold_reasons") or [])])[:200],
                     "Content Reference": cr.get("content_reference", ""),
-                    "Total Spent": ms.get("spend", 0.0) or 0.0,
+                    "Created At": _fmt_utc_ms(cr.get("created_at")),
+                    "Last Modified At": _fmt_utc_ms(cr.get("last_modified_at")),
+                    "Total Spent": spend,
                     "Impressions": ms.get("impressions", 0) or 0,
                     "Clicks": ms.get("clicks", 0) or 0,
                     "Click Through Rate": ms.get("ctr", 0.0) or 0.0,
@@ -567,13 +585,172 @@ def _flatten_creative_summary(snapshot: dict) -> list[dict]:
                     "Comments": ms.get("comments", 0) or 0,
                     "Shares": ms.get("shares", 0) or 0,
                     "Follows": ms.get("follows", 0) or 0,
-                    "Leads": ms.get("leads", 0) or 0,
+                    "Leads": leads,
+                    "Cost per Lead": cpl,
+                    "Opens": ms.get("opens", 0) or 0,
+                    "Sends": ms.get("sends", 0) or 0,
                     "Conversions": ms.get("conversions", 0) or 0,
                 })
     return out
 
 
-def _render_table(rows: list[dict], columns: list[str], page: int, page_size: int, mode: str = "") -> str:
+def _flatten_campaign_settings(snapshot: dict) -> list[dict]:
+    out: list[dict] = []
+    for acct in snapshot.get("accounts", []):
+        acct_name = acct.get("name", "")
+        currency = acct.get("currency", "")
+        for camp in acct.get("campaigns", []):
+            settings = camp.get("settings", {}) or {}
+            run_schedule = settings.get("run_schedule", {}) or {}
+            camp_start_ms = run_schedule.get("start")
+            camp_end_ms = run_schedule.get("end")
+            out.append({
+                "Account Name": acct_name,
+                "Currency": currency,
+                "Campaign Group ID": _extract_id(settings.get("campaign_group")),
+                "Campaign ID": camp.get("id", ""),
+                "Campaign Name": camp.get("name", ""),
+                "Campaign Type": camp.get("type", ""),
+                "Campaign Status": camp.get("status", ""),
+                "Cost Type": settings.get("cost_type", ""),
+                "Bid Strategy": settings.get("bid_strategy", ""),
+                "Daily Budget": settings.get("daily_budget", ""),
+                "Total Budget": settings.get("total_budget", ""),
+                "Unit Cost": settings.get("unit_cost", ""),
+                "Creative Selection": settings.get("creative_selection", ""),
+                "Offsite Delivery Enabled": settings.get("offsite_delivery_enabled", ""),
+                "Audience Expansion Enabled": settings.get("audience_expansion_enabled", ""),
+                "Campaign Start Date": _fmt_utc_ms(camp_start_ms),
+                "Campaign End Date": _fmt_utc_ms(camp_end_ms),
+            })
+    return out
+
+
+# Well-known LinkedIn enum maps for display-time URN resolution
+_SENIORITY_NAMES = {
+    "1": "Unpaid", "2": "Training", "3": "Entry", "4": "Senior",
+    "5": "Manager", "6": "Director", "7": "VP", "8": "CXO",
+    "9": "Partner", "10": "Owner",
+}
+_COMPANY_SIZE_NAMES = {
+    "A": "Self-employed (1)", "B": "2\u201310 employees", "C": "11\u201350 employees",
+    "D": "51\u2013200 employees", "E": "201\u2013500 employees", "F": "501\u20131,000 employees",
+    "G": "1,001\u20135,000 employees", "H": "5,001\u201310,000 employees", "I": "10,001+ employees",
+}
+_JOB_FUNCTION_NAMES = {
+    "1": "Accounting", "2": "Administrative", "3": "Arts and Design",
+    "4": "Business Development", "5": "Community & Social Services", "6": "Consulting",
+    "7": "Education", "8": "Engineering", "9": "Entrepreneurship", "10": "Finance",
+    "11": "Healthcare Services", "12": "Human Resources", "13": "Information Technology",
+    "14": "Legal", "15": "Marketing", "16": "Media & Communications",
+    "17": "Military & Protective Services", "18": "Operations", "19": "Product Management",
+    "20": "Program & Project Management", "21": "Purchasing", "22": "Quality Assurance",
+    "23": "Real Estate", "24": "Research", "25": "Sales", "26": "Customer Success & Support",
+}
+
+
+def _resolve_segment_name(segment: str) -> str:
+    """Try to resolve a URN-style segment to a human-readable name using local maps."""
+    if not segment or "urn:" not in segment:
+        return segment
+    parts = segment.split(":")
+    if len(parts) < 4:
+        return segment
+    entity_type, entity_id = parts[2], parts[3]
+    if entity_type == "seniority":
+        return _SENIORITY_NAMES.get(entity_id, segment)
+    if entity_type in ("companySizeRange", "companySize"):
+        return _COMPANY_SIZE_NAMES.get(entity_id, segment)
+    if entity_type == "function":
+        return _JOB_FUNCTION_NAMES.get(entity_id, segment)
+    return segment
+
+
+# Module-level cache for API-resolved URN names (persists across requests)
+_urn_api_cache: dict[str, str] = {}
+
+
+def _resolve_urns_via_api(urns: list[str], auth_manager: AuthManager) -> dict[str, str]:
+    """
+    Batch-resolve URNs via LinkedIn /adTargetingEntities API.
+
+    Results are cached in _urn_api_cache so the API is only called once per URN.
+    """
+    # Filter to URNs not already in cache
+    to_resolve = [u for u in urns if u not in _urn_api_cache]
+    if not to_resolve:
+        return _urn_api_cache
+
+    if not auth_manager.is_authenticated():
+        return _urn_api_cache
+
+    try:
+        client = LinkedInClient(auth_manager)
+        for i in range(0, len(to_resolve), 50):
+            batch = to_resolve[i : i + 50]
+            encoded = ",".join(u.replace(":", "%3A") for u in batch)
+            try:
+                data = client.get("/adTargetingEntities", f"q=urns&urns=List({encoded})")
+                for elem in data.get("elements", []):
+                    urn = elem.get("urn", "")
+                    name = elem.get("name", "")
+                    if urn and name:
+                        _urn_api_cache[urn] = name
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Mark URNs that couldn't be resolved so we don't retry them
+    for u in to_resolve:
+        if u not in _urn_api_cache:
+            _urn_api_cache[u] = ""
+
+    return _urn_api_cache
+
+
+def _flatten_demographics(snapshot: dict, auth_manager: AuthManager | None = None) -> list[dict]:
+    out: list[dict] = []
+
+    # First pass: collect all raw segments that are still URNs after local resolution
+    unresolved_urns: list[str] = []
+    for acct in snapshot.get("accounts", []):
+        demos = acct.get("audience_demographics", {}) or {}
+        for pivot_type, segments in demos.items():
+            for seg in segments or []:
+                raw = seg.get("segment", "")
+                if "urn:" in raw and _resolve_segment_name(raw) == raw:
+                    unresolved_urns.append(raw)
+
+    # Batch-resolve unresolved URNs via LinkedIn API
+    api_names: dict[str, str] = {}
+    if unresolved_urns and auth_manager is not None:
+        api_names = _resolve_urns_via_api(unresolved_urns, auth_manager)
+
+    # Second pass: build rows with fully resolved names
+    for acct in snapshot.get("accounts", []):
+        acct_name = acct.get("name", "")
+        demos = acct.get("audience_demographics", {}) or {}
+        for pivot_type, segments in demos.items():
+            for seg in segments or []:
+                raw = seg.get("segment", "")
+                # Try: local enum map → API cache → raw URN
+                display_name = _resolve_segment_name(raw)
+                if display_name == raw and "urn:" in raw:
+                    display_name = api_names.get(raw, "") or raw
+                out.append({
+                    "Account Name": acct_name,
+                    "Pivot Type": pivot_type.replace("_", " ").title(),
+                    "Segment": display_name,
+                    "Impressions": seg.get("impressions", 0) or 0,
+                    "Clicks": seg.get("clicks", 0) or 0,
+                    "Click Through Rate": seg.get("ctr", 0.0) or 0.0,
+                    "Share of Impressions": seg.get("share_of_impressions", 0.0) or 0.0,
+                })
+    return out
+
+
+def _render_table(rows: list[dict], columns: list[str], page: int, page_size: int, mode: str = "", extra_params: str = "") -> str:
     total = len(rows)
     page_size = max(10, min(page_size, 500))
     max_page = max(1, (total + page_size - 1) // page_size)
@@ -583,18 +760,18 @@ def _render_table(rows: list[dict], columns: list[str], page: int, page_size: in
 
     def cell(col: str, v) -> str:
         cls = []
-        if col in {"Impressions","Clicks","Reactions","Comments","Shares","Follows","Leads","Conversions","Clicks to Landing Page"}:
+        if col in {"Impressions","Clicks","Reactions","Comments","Shares","Follows","Leads","Conversions","Clicks to Landing Page","Opens","Sends"}:
             cls.append("right")
             txt = _fmt_num(v, 0)
-        elif col in {"Total Spent","Average CPM","Average CPC","Cost per Conversion","Daily Budget"}:
+        elif col in {"Total Spent","Average CPM","Average CPC","Cost per Conversion","Cost per Lead","Daily Budget","Total Budget","Unit Cost"}:
             cls.append("right")
             txt = _fmt_num(v, 2)
-        elif col in {"Click Through Rate","Engagement Rate"}:
+        elif col in {"Click Through Rate","Engagement Rate","Share of Impressions"}:
             cls.append("right")
             txt = _fmt_pct(v, 2)
         else:
             txt = "" if v is None else str(v)
-        if col in {"Start Date (in UTC)","Campaign Start Date"}:
+        if col in {"Start Date (in UTC)","Campaign Start Date","Campaign End Date","Created At","Last Modified At"}:
             cls.append("nowrap")
         return f'<td class="{" ".join(cls)}">{_h(txt)}</td>'
 
@@ -608,8 +785,8 @@ def _render_table(rows: list[dict], columns: list[str], page: int, page_size: in
     pager = (
         f'<div class="pager">'
         f'<span class="muted">Rows {start+1:,}&ndash;{end:,} of {total:,} &middot; Page {page}/{max_page}</span>'
-        f'<a class="btn-ghost btn" href="?page={max(1,page-1)}&page_size={page_size}{mode_param}">Prev</a>'
-        f'<a class="btn-ghost btn" href="?page={min(max_page,page+1)}&page_size={page_size}{mode_param}">Next</a>'
+        f'<a class="btn-ghost btn" href="?page={max(1,page-1)}&page_size={page_size}{mode_param}{extra_params}">Prev</a>'
+        f'<a class="btn-ghost btn" href="?page={min(max_page,page+1)}&page_size={page_size}{mode_param}{extra_params}">Next</a>'
         f'</div>'
     )
     return table + pager
@@ -760,8 +937,10 @@ def register_routes(app, auth_manager: AuthManager):
                 all_creatives.extend(crs)
                 logs.append(f"  Account {acct_id}: {len(crs)} creatives")
                 demo = fetch_demographics(client, campaign_ids, date_start, today)
-                demographics_by_account[acct_id] = demo
-                logs.append(f"  Account {acct_id}: demographics pivots {len(demo)}")
+                # Resolve demographic URNs to human-readable names
+                urn_names = resolve_demographic_urns(client, demo)
+                demographics_by_account[acct_id] = {"pivots": demo, "urn_names": urn_names}
+                logs.append(f"  Account {acct_id}: demographics pivots {len(demo)}, resolved {len(urn_names)} URNs")
 
             camp_metrics = fetch_campaign_metrics(client, [c["id"] for c in all_campaigns], date_start, today)
             logs.append(f"Campaign metric rows: {len(camp_metrics)}")
@@ -874,6 +1053,8 @@ def register_routes(app, auth_manager: AuthManager):
             "campaign_daily": "Campaign Daily (time series)",
             "campaign_summary": "Campaign Summary (90d total)",
             "creative_summary": "Creative Summary (90d total)",
+            "campaign_settings": "Campaign Settings",
+            "demographics": "Audience Demographics",
         }
         mode_label = options.get(mode, options["campaign_daily"])
 
@@ -883,7 +1064,8 @@ def register_routes(app, auth_manager: AuthManager):
                 "Account Name","Currency","Campaign Group ID","Campaign ID","Campaign Name","Campaign Type","Campaign Status",
                 "Cost Type","Daily Budget","Campaign Start Date",
                 "Total Spent","Impressions","Clicks","Click Through Rate","Average CPM","Average CPC",
-                "Reactions","Comments","Shares","Follows","Leads","Clicks to Landing Page","Conversions","Cost per Conversion",
+                "Reactions","Comments","Shares","Follows","Leads","Cost per Lead","Opens","Sends",
+                "Clicks to Landing Page","Conversions","Cost per Conversion",
                 "Total Social Actions","Total Engagements","Engagement Rate",
             ]
         elif mode == "creative_summary":
@@ -891,8 +1073,26 @@ def register_routes(app, auth_manager: AuthManager):
             columns = [
                 "Account Name","Currency","Campaign ID","Campaign Name",
                 "Creative ID","Creative Intended Status","Creative Is Serving","Serving Hold Reasons","Content Reference",
+                "Created At","Last Modified At",
                 "Total Spent","Impressions","Clicks","Click Through Rate","Average CPM","Average CPC",
-                "Reactions","Comments","Shares","Follows","Leads","Conversions",
+                "Reactions","Comments","Shares","Follows","Leads","Cost per Lead","Opens","Sends","Conversions",
+            ]
+        elif mode == "campaign_settings":
+            rows = _flatten_campaign_settings(snapshot)
+            columns = [
+                "Account Name","Currency","Campaign Group ID","Campaign ID","Campaign Name","Campaign Type","Campaign Status",
+                "Cost Type","Bid Strategy","Daily Budget","Total Budget","Unit Cost",
+                "Creative Selection","Offsite Delivery Enabled","Audience Expansion Enabled",
+                "Campaign Start Date","Campaign End Date",
+            ]
+        elif mode == "demographics":
+            rows = _flatten_demographics(snapshot, auth_manager=auth_manager)
+            pivot_filter = request.args.get("pivot", "")
+            if pivot_filter:
+                rows = [r for r in rows if r.get("Pivot Type") == pivot_filter]
+            columns = [
+                "Account Name","Pivot Type","Segment",
+                "Impressions","Clicks","Click Through Rate","Share of Impressions",
             ]
         else:
             rows = _flatten_campaign_daily(snapshot)
@@ -900,12 +1100,32 @@ def register_routes(app, auth_manager: AuthManager):
                 "Start Date (in UTC)","Account Name","Currency","Campaign Group ID","Campaign ID","Campaign Name","Campaign Type","Campaign Status",
                 "Cost Type","Daily Budget","Campaign Start Date",
                 "Total Spent","Impressions","Clicks","Click Through Rate","Average CPM","Average CPC",
-                "Reactions","Comments","Shares","Follows","Leads","Clicks to Landing Page","Conversions","Cost per Conversion",
+                "Reactions","Comments","Shares","Follows","Leads","Cost per Lead","Opens","Sends",
+                "Clicks to Landing Page","Conversions","Cost per Conversion",
                 "Total Social Actions","Total Engagements","Engagement Rate",
             ]
 
         rows.sort(key=lambda r: (r.get("Account Name",""), r.get("Campaign Name",""), r.get("Start Date (in UTC)","")))
         total_rows = len(rows)
+
+        # Build pivot filter dropdown for demographics mode
+        pivot_html = ""
+        if mode == "demographics":
+            pivot_filter = request.args.get("pivot", "")
+            pivot_options = {
+                "": "All Pivots",
+                "Job Title": "Job Title",
+                "Job Function": "Job Function",
+                "Industry": "Industry",
+                "Seniority": "Seniority",
+                "Company Size": "Company Size",
+                "Country V2": "Country",
+            }
+            pivot_html = (
+                '  <div><label for="pivot">Pivot Type</label><select name="pivot" id="pivot">'
+                + "".join([f'<option value="{_h(k)}" {"selected" if k==pivot_filter else ""}>{_h(v)}</option>' for k,v in pivot_options.items()])
+                + '</select></div>'
+            )
 
         form = (
             f'<div class="card">'
@@ -915,11 +1135,17 @@ def register_routes(app, auth_manager: AuthManager):
             f'  <div><label for="mode">View</label><select name="mode" id="mode">'
             + "".join([f'<option value="{k}" {"selected" if k==mode else ""}>{_h(v)}</option>' for k,v in options.items()])
             + f'</select></div>'
-            f'  <div><label for="page_size">Rows</label><input type="number" min="10" max="500" name="page_size" id="page_size" value="{page_size}"></div>'
+            + pivot_html
+            + f'  <div><label for="page_size">Rows</label><input type="number" min="10" max="500" name="page_size" id="page_size" value="{page_size}"></div>'
             f'  <div><button class="btn" type="submit">Apply</button></div>'
             f'</form>'
             f'</div>'
         )
 
-        table_html = _render_table(rows, columns, page=page, page_size=page_size, mode=mode)
+        extra_params = ""
+        if mode == "demographics":
+            pf = request.args.get("pivot", "")
+            if pf:
+                extra_params = f"&pivot={_h(pf)}"
+        table_html = _render_table(rows, columns, page=page, page_size=page_size, mode=mode, extra_params=extra_params)
         return _render(form + table_html, page_title=f"Report &middot; {_h(mode_label)}", active_page="report")

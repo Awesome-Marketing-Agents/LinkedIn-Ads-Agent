@@ -167,3 +167,73 @@ def fetch_demographics(
             demographics[pivot] = []
 
     return demographics
+
+
+def _extract_urn_parts(urn: str) -> tuple[str, str]:
+    """Extract (entity_type, entity_id) from a URN like 'urn:li:title:1335'."""
+    parts = str(urn).split(":")
+    if len(parts) >= 4:
+        return parts[2], parts[3]
+    return "", ""
+
+
+def resolve_demographic_urns(
+    client: LinkedInClient,
+    demo_data: dict[str, list[dict]],
+) -> dict[str, str]:
+    """
+    Resolve demographic URNs to human-readable names.
+
+    Groups URNs by entity type and uses the appropriate LinkedIn API
+    endpoint for each type.  Falls back gracefully on failures.
+    """
+    # Collect all unique URNs grouped by entity type
+    urns_by_type: dict[str, list[str]] = {}
+    for _pivot, rows in demo_data.items():
+        for r in rows:
+            for pv in r.get("pivotValues", []):
+                pv_str = str(pv)
+                if "urn:" not in pv_str:
+                    continue
+                etype, eid = _extract_urn_parts(pv_str)
+                if etype and eid:
+                    urns_by_type.setdefault(etype, []).append(pv_str)
+
+    if not urns_by_type:
+        return {}
+
+    urn_to_name: dict[str, str] = {}
+
+    # Map entity types to their LinkedIn batch-GET endpoints
+    # These endpoints accept: /endpoint?ids=List(id1,id2,...)
+    type_to_endpoint = {
+        "title": "/adTargetingEntities",
+        "industry": "/adTargetingEntities",
+        "geo": "/adTargetingEntities",
+        "country": "/adTargetingEntities",
+        "region": "/adTargetingEntities",
+    }
+
+    # Try the general /adTargetingEntities batch approach first for all URNs
+    all_urns = list({u for urns in urns_by_type.values() for u in urns})
+    for i in range(0, len(all_urns), 50):
+        batch = all_urns[i : i + 50]
+        encoded = ",".join(u.replace(":", "%3A") for u in batch)
+        # Try the facetUrn-based query which is more reliable
+        for query_style in [
+            f"q=urns&urns=List({encoded})",
+            f"q=adTargetingFacet&urns=List({encoded})",
+        ]:
+            try:
+                data = client.get("/adTargetingEntities", query_style)
+                for elem in data.get("elements", []):
+                    urn = elem.get("urn", "")
+                    name = elem.get("name", "") or elem.get("facetName", "")
+                    if urn and name:
+                        urn_to_name[urn] = name
+                if urn_to_name:
+                    break  # first style worked
+            except Exception:
+                continue
+
+    return urn_to_name

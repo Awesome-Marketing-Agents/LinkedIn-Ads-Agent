@@ -1,6 +1,8 @@
 """Snapshot assembly: transform raw API data into a structured dict for LLM analysis.
 
 Also handles writing the snapshot to JSON on disk.
+Raw API data is validated through Pydantic models before processing;
+invalid records are logged and skipped.
 """
 
 from __future__ import annotations
@@ -10,7 +12,17 @@ import datetime as _dt
 from datetime import datetime, timezone
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from linkedin_action_center.core.config import SNAPSHOT_DIR
+from linkedin_action_center.models.api_models import (
+    LinkedInAccount,
+    LinkedInCampaign,
+    LinkedInCreative,
+    LinkedInAnalyticsRow,
+    LinkedInDemographicRow,
+)
+from linkedin_action_center.utils.logger import logger
 
 
 # -- Internal helpers --------------------------------------------------------
@@ -135,6 +147,28 @@ def _top_demographics(demo_rows: list[dict], top_n: int = 10) -> list[dict]:
     return result
 
 
+# -- Validation helpers -----------------------------------------------------
+
+def _validate_list(raw_items: list[dict], model_cls: type, label: str) -> list[dict]:
+    """Validate a list of raw dicts through *model_cls*.
+
+    Returns the original dicts for items that pass validation (preserving all
+    original keys for downstream processing).  Invalid items are logged and
+    skipped.
+    """
+    valid: list[dict] = []
+    for raw in raw_items:
+        try:
+            model_cls.model_validate(raw)
+            valid.append(raw)
+        except ValidationError as exc:
+            item_id = raw.get("id", "unknown")
+            logger.warning(
+                f"Validation failed for {label} {item_id}: {exc.error_count()} error(s) — skipped"
+            )
+    return valid
+
+
 # -- Public API --------------------------------------------------------------
 
 def assemble_snapshot(
@@ -150,9 +184,29 @@ def assemble_snapshot(
     """
     Combine all raw API data into a single structured snapshot.
 
-    The returned dict is self-contained and ready to be serialised to JSON
-    or fed directly to an LLM for analysis.
+    Raw data is validated through Pydantic models before processing.
+    Invalid records are logged and skipped.
     """
+    # --- Validation gate ---------------------------------------------------
+    accounts = _validate_list(accounts, LinkedInAccount, "account")
+    campaigns_list = _validate_list(campaigns_list, LinkedInCampaign, "campaign")
+    creatives_list = _validate_list(creatives_list, LinkedInCreative, "creative")
+    camp_metrics = _validate_list(camp_metrics, LinkedInAnalyticsRow, "campaign_metric")
+    creat_metrics = _validate_list(creat_metrics, LinkedInAnalyticsRow, "creative_metric")
+
+    # Validate demographic rows per pivot
+    validated_demo: dict = {}
+    if isinstance(demo_data, dict):
+        for pivot, rows in demo_data.items():
+            if isinstance(rows, list):
+                validated_demo[pivot] = _validate_list(
+                    rows, LinkedInDemographicRow, f"demographic[{pivot}]",
+                )
+            else:
+                validated_demo[pivot] = rows
+        demo_data = validated_demo
+
+    # --- Index building (unchanged logic) ---------------------------------
     # Index campaign metrics by campaign ID
     camp_metric_map: dict[str, list[dict]] = {}
     for r in camp_metrics:

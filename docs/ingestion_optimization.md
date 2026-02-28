@@ -686,3 +686,21 @@ A task is done when:
 ---
 
 *Document ends. Questions go to engineering before sprint kickoff.*
+
+---
+
+## Node.js Migration Status
+
+The Node.js migration (`node-app/`) addresses several of the problems identified in this document, taking a different architectural approach from the Python optimization roadmap described above.
+
+**Problem 1 (Duplicate Data):** The Node.js version currently uses `INSERT OR REPLACE`, the same approach as the Python codebase. However, the architecture supports easy migration to true `ON CONFLICT DO UPDATE` semantics via Drizzle ORM, which provides typed, composable query building with first-class upsert support.
+
+**Problem 2 (No Type Safety):** The Node.js version uses TypeScript throughout the stack, providing compile-time type safety that catches errors before runtime. Zod validates configuration at startup (equivalent to the Pydantic BaseSettings approach proposed in Section 3.5). Drizzle ORM provides a fully typed database schema, eliminating the mismatch between application code and database structure.
+
+**Problem 3 (Tech Stack Mismatch):** The Node.js version consolidates the server layer into a single Fastify server, replacing the Flask + FastAPI split. The frontend is a React SPA, replacing the inline HTML templates. Async operations use native `async/await` for concurrent API calls, which is idiomatic in Node.js without requiring a separate library like `httpx`.
+
+**Key performance improvement:** The Node.js ingestion pipeline uses `Promise.all` combined with `p-limit(3)` for parallel batch processing of metrics, providing bounded concurrency with a semaphore pattern. This approach is estimated to be 3-4x faster than the current synchronous Python sync, which processes API calls sequentially.
+
+**Real-time feedback:** SSE (Server-Sent Events) streaming provides real-time sync progress feedback to the frontend, allowing users to see each stage of the ingestion process as it happens.
+
+**Note on the optimization roadmap:** The Phase 1 through Phase 4 optimization roadmap in this document was designed for the Python stack. The Node.js migration takes a fundamentally different approach -- rebuilding the stack from the ground up rather than incrementally modernizing -- but addresses the same underlying concerns: data deduplication, type safety, and architectural alignment with a modern SaaS product.

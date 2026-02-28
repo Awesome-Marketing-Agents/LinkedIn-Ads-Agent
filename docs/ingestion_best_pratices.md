@@ -1304,3 +1304,13 @@ PROBLEM: Can't reproduce a data issue from last week
 ---
 
 *This document is a living reference. Update it when new patterns are introduced to the codebase. The goal is that any developer can open this document and understand the "why" behind every architectural decision in the ingestion pipeline.*
+
+---
+
+## Applicability to Node.js Migration
+
+The patterns described in this document -- rate limiting, pagination, batch processing, and retry with exponential backoff -- apply equally to the Node.js migration in `node-app/`. The conceptual approaches are the same; only the implementation primitives differ.
+
+- **HTTP client:** The Node.js implementation uses native `fetch` with `async/await` instead of Python's `httpx`. The same principles of connection pooling, timeouts, and structured error handling apply.
+- **Concurrency control:** Concurrency is managed via `p-limit` (a semaphore pattern) instead of Python's `asyncio.Semaphore`. The effect is identical: bounding the number of concurrent API calls to avoid overwhelming the upstream service.
+- **Token bucket and circuit breaker:** These patterns can be implemented as needed in the Node.js stack using the same conceptual approach described in Sections 1 and 2 of this document. Libraries such as `bottleneck` (rate limiting) and `opossum` (circuit breaker) serve equivalent roles to Python's `aiolimiter` and `pybreaker`.

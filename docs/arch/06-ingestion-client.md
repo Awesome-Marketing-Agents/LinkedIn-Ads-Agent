@@ -92,3 +92,30 @@ Fetcher / Metrics
 - API base URL: `https://api.linkedin.com/rest` (from `core.constants`).
 - LinkedIn API version: `202602` (via `LinkedIn-Version` header).
 - No retry logic; callers can implement retries for `RateLimitError`.
+
+---
+
+## Node.js Equivalent
+
+**File**: `node-app/src/ingestion/client.ts`
+
+The Node.js port replaces `ingestion/client.py` with an equivalent TypeScript module that uses the native `fetch` API instead of the Python `requests` library.
+
+### Key Mappings
+
+| Python | Node.js |
+|--------|---------|
+| `ingestion/client.py` | `node-app/src/ingestion/client.ts` |
+| `requests.get()` | Native `fetch()` |
+| `LinkedInClient` class | Same class structure |
+
+### Preserved Patterns
+
+- **`_headers()`** -- Returns the same `Authorization`, `LinkedIn-Version`, and `X-Restli-Protocol-Version` headers.
+- **`get(path, paramsStr)`** -- Single GET request returning parsed JSON. Raises equivalent errors on 429 and other HTTP failures.
+- **`getAllPages(path, paramsStr, key, pageSize)`** -- Same pagination logic supporting both offset-based (`start`/`count`) and token-based (`pageToken`) pagination.
+- **Rate limit handling** -- 429 responses produce a `RateLimitError` that includes the `Retry-After` header value, identical to the Python version.
+
+### Key Difference
+
+The entire client is **async/await throughout**. Every method that performs HTTP is `async` and returns a `Promise`, whereas the Python version uses synchronous `requests.get()` calls. This is the natural pattern for Node.js and does not change the call semantics for consumers -- fetchers and metrics modules simply `await` the results.

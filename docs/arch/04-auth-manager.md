@@ -99,6 +99,17 @@ API call → get_access_token()
 
 ---
 
+## Node.js Equivalent
+
+- `auth/manager.py` is replaced by `node-app/src/auth/manager.ts`.
+- The same `AuthManager` class pattern is used, with methods converted to async (returning Promises).
+- Uses native `fetch` instead of the Python `requests` library.
+- The same 5-minute expiry buffer is preserved for proactive token refresh.
+- The same `tokens.json` file-based persistence mechanism is used.
+- Same edge cases are preserved: the optional refresh token in the LinkedIn response is handled identically (LinkedIn may not always return a new refresh token).
+
+---
+
 ## Advanced Notes
 
 - Tokens include `access_token_expires_at` and optionally `refresh_token_expires_at` (computed from `expires_in`).

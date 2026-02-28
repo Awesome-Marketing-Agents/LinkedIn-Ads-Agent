@@ -91,3 +91,40 @@ Application startup
 - `.env.example` in repo shows expected variables; `.env` is git-ignored.
 - No validation of config values at import; failures surface when auth or DB is used.
 - Paths are `pathlib.Path` objects; use `str(path)` when passing to `sqlite3.connect()`.
+
+---
+
+## Node.js Equivalent
+
+- **Python:** `core/config.py` --> **Node.js:** `node-app/src/config.ts`
+- Uses `dotenv` for `.env` loading combined with `zod` schema validation. The zod schema validates all environment variables at import time and fails fast on missing or invalid values, unlike the Python version which defers failure.
+- Same environment variables are used: `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `LINKEDIN_REDIRECT_URI`, `OAUTH_STATE`.
+- Same path setup is preserved: `DATA_DIR`, `SNAPSHOT_DIR`, `TOKENS_FILE`, `DATABASE_FILE`.
+- Directories are created at import using `fs.mkdirSync({ recursive: true })`, which is equivalent to Python's `Path.mkdir(exist_ok=True)`.
+
+```typescript
+import { z } from "zod";
+import dotenv from "dotenv";
+import fs from "node:fs";
+import path from "node:path";
+
+dotenv.config();
+
+const envSchema = z.object({
+  LINKEDIN_CLIENT_ID: z.string().min(1),
+  LINKEDIN_CLIENT_SECRET: z.string().min(1),
+  LINKEDIN_REDIRECT_URI: z.string().default("http://localhost:5000/callback"),
+  OAUTH_STATE: z.string().default("supersecretstate"),
+});
+
+export const env = envSchema.parse(process.env);
+
+export const BASE_DIR = path.resolve(__dirname, "../..");
+export const DATA_DIR = path.join(BASE_DIR, "data");
+export const SNAPSHOT_DIR = path.join(DATA_DIR, "snapshots");
+export const TOKENS_FILE = path.join(BASE_DIR, "tokens.json");
+export const DATABASE_FILE = path.join(DATA_DIR, "linkedin_ads.db");
+
+fs.mkdirSync(DATA_DIR, { recursive: true });
+fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
+```

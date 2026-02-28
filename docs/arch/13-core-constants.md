@@ -76,3 +76,24 @@ auth/manager, ingestion/client
 - OAuth token endpoint: `{OAUTH2_BASE_URL}/accessToken`.
 - Rest.li protocol: `X-Restli-Protocol-Version: 2.0.0` is set in the client, not in constants.
 - Adding new scopes (e.g. `rw_ads`) requires LinkedIn app approval and user re-authorization.
+
+---
+
+## Node.js Equivalent
+
+- **Python:** `core/constants.py` --> **Node.js:** `node-app/src/constants.ts`
+- Direct port using TypeScript `as const` for immutable values. This provides compile-time immutability and narrow literal types, similar to Python's module-level constants.
+- Same constants are defined: `API_BASE_URL`, `OAUTH2_BASE_URL`, `INTROSPECT_URL`, `LINKEDIN_API_VERSION`, `SCOPES`.
+
+```typescript
+export const API_BASE_URL = "https://api.linkedin.com/rest" as const;
+export const OAUTH2_BASE_URL = "https://www.linkedin.com/oauth/v2" as const;
+export const INTROSPECT_URL = "https://www.linkedin.com/oauth/v2/introspectToken" as const;
+export const LINKEDIN_API_VERSION = "202602" as const;
+
+export const SCOPES = [
+  "r_ads",
+  "r_ads_reporting",
+  "r_basicprofile",
+] as const;
+```

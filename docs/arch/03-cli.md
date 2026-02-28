@@ -88,6 +88,15 @@ User runs: uv run python cli.py <command>
 
 ---
 
+## Node.js Equivalent
+
+- `cli.py` is replaced by `node-app/src/cli.ts`, which uses Commander.js for argument parsing.
+- The same commands are supported: `auth`, `sync`, `status`.
+- Run with: `npx tsx src/cli.ts auth|sync|status`.
+- Key improvement: the sync command uses `Promise.all` for parallel metric, creative, and demographic fetching, resulting in roughly 3-4x faster sync times compared to the sequential Python implementation.
+
+---
+
 ## Advanced Notes
 
 - Docstring says `python main.py` but the actual entry point is `cli.py`.

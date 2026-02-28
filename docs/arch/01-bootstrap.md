@@ -70,6 +70,12 @@ main.py / cli.py
 
 ---
 
+## Node.js Equivalent
+
+The Node.js migration (`node-app/`) does not need a bootstrap module. TypeScript uses `tsconfig.json` path resolution and ESM imports natively. No `sys.path` manipulation is needed.
+
+---
+
 ## Advanced Notes
 
 - `BASE_DIR` in `core/config.py` is computed from `__file__` in `config.py`, not from `bootstrap`.

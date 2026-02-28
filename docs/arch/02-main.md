@@ -80,6 +80,16 @@ Browser
 
 ---
 
+## Node.js Equivalent
+
+- Python's `main.py` (Flask on port 5000) is replaced by `node-app/src/server.ts` (Fastify on port 5002).
+- Inline HTML templates are replaced by a React SPA in `node-app/frontend/`.
+- Routes are split into separate modules: `node-app/src/routes/auth.ts`, `sync.ts`, `status.ts`, and `report.ts`.
+- The Node.js backend is API-only; the frontend is served by the Vite dev server (port 3000) during development, or as built static files in production.
+- New capability: SSE streaming for sync progress via `POST /api/sync` using an EventEmitter pattern, allowing the frontend to display real-time sync updates.
+
+---
+
 ## Advanced Notes
 
 - Uses `render_template_string` with a single `LAYOUT`; no separate template files.

@@ -102,3 +102,31 @@ Sync flow
 - Campaign URN format: `urn:li:sponsoredCampaign:{id}`.
 - Creatives are linked to campaigns via `campaign` field (URN) in the creative object.
 - Pagination is handled inside `client.get_all_pages()`.
+
+---
+
+## Node.js Equivalent
+
+**File**: `node-app/src/ingestion/fetchers.ts`
+
+The Node.js port replaces `ingestion/fetchers.py` with an equivalent TypeScript module.
+
+### Key Mappings
+
+| Python | Node.js |
+|--------|---------|
+| `ingestion/fetchers.py` | `node-app/src/ingestion/fetchers.ts` |
+| `fetch_ad_accounts(client)` | `fetchAdAccounts(client)` |
+| `fetch_campaigns(client, accountId, statuses)` | `fetchCampaigns(client, accountId, statuses)` |
+| `fetch_creatives(client, accountId, campaignIds)` | `fetchCreatives(client, accountId, campaignIds)` |
+
+### Preserved Patterns
+
+- **Same three functions** with identical responsibilities: fetch ad accounts, campaigns, and creatives.
+- **Same Restli query syntax** and URN encoding for campaign filtering on the creatives endpoint.
+- **Same default status filters** (`ACTIVE`, `PAUSED`, `DRAFT`) for campaigns.
+- **Pagination** delegated to `client.getAllPages()`, same as the Python version.
+
+### Key Difference
+
+All functions are **async** and use native `fetch` under the hood (via the async `LinkedInClient`). The call signatures and return shapes are otherwise identical to the Python originals.

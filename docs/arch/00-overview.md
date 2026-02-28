@@ -172,6 +172,90 @@ main.py / cli.py
 
 ---
 
+## Node.js Migration
+
+The LinkedIn Ads Action Center has been ported to Node.js/TypeScript. The Python codebase remains intact; the Node.js version lives under `node-app/` and provides equivalent functionality with a modern TypeScript stack.
+
+### Key Replacements
+
+| Python Component | Node.js Equivalent |
+|------------------|--------------------|
+| Flask web dashboard (`main.py`) | Fastify server (`node-app/src/server.ts`) |
+| Inline HTML templates | React single-page application (`node-app/frontend/src/`) |
+| FastAPI OAuth callback (`auth/callback.py`) | Fastify route handler within the same server |
+| `cli.py` (argparse) | Commander.js CLI (`node-app/src/cli.ts`) |
+
+### Updated System Components (Node.js)
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| **Auth** | `node-app/src/auth/` | OAuth 2.0 flow, token storage, refresh |
+| **Ingestion** | `node-app/src/ingestion/` | HTTP client, API fetchers, metrics |
+| **Storage** | `node-app/src/storage/` | Drizzle ORM schema, repository, snapshot assembly |
+| **Config** | `node-app/src/config.ts` | Env vars loaded via dotenv + zod validation |
+| **Web Dashboard** | `node-app/src/server.ts` | Fastify server serving the React SPA and API routes |
+| **Frontend** | `node-app/frontend/src/` | React SPA built with Vite |
+| **CLI** | `node-app/src/cli.ts` | Commander.js commands (`auth`, `sync`, `status`) |
+
+### Updated Data Flow (Node.js)
+
+```
+1. User initiates action (React SPA or CLI)
+       |
+2. AuthManager.getAccessToken()
+   - Loads tokens from tokens.json
+   - Auto-refreshes if expired (5 min buffer)
+       |
+3. Parallel fetching with Promise.all:
+   - fetchAdAccounts(client)
+   - For each account: fetchCampaigns(client, accountId)
+   - For each campaign: fetchCreatives(client, accountId, campaignIds)
+   - Promise.all([
+       fetchCampaignMetrics(client, campaignIds, dateStart, dateEnd),
+       fetchCreativeMetrics(client, campaignIds, dates),
+       fetchDemographics(client, campaignIds, dates)
+     ])
+       |
+4. assembleSnapshot()
+   - Same logic as Python, produces structured object
+   - Aggregates metrics, computes CTR, CPC, etc.
+       |
+5. Persistence
+   a) saveSnapshotJson(snapshot) -> data/snapshots/snapshot_YYYYMMDD.json
+   b) persistSnapshot(snapshot) -> data/linkedin_ads.db (SQLite via Drizzle)
+       |
+6. User sees results (React dashboard or CLI output)
+```
+
+### Node.js Config
+
+The same environment variables are used (`LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `LINKEDIN_REDIRECT_URI`, `OAUTH_STATE`). They are loaded via `dotenv` and validated at startup with `zod` schemas in `node-app/src/config.ts`. Paths for tokens, database, snapshots, and logs follow the same conventions as the Python version.
+
+### Node.js Dependencies
+
+| Layer | Technology |
+|-------|------------|
+| Package manager | npm |
+| Web server | Fastify |
+| ORM / Database | Drizzle (SQLite) |
+| Frontend framework | React |
+| Frontend build tool | Vite |
+| Language | TypeScript |
+| Logging | Pino |
+| Testing | Vitest |
+
+### Node.js File Locations
+
+| Area | Path |
+|------|------|
+| Backend source | `node-app/src/` |
+| Frontend source | `node-app/frontend/src/` |
+| Config | `node-app/src/config.ts` |
+| CLI entry point | `node-app/src/cli.ts` |
+| Server entry point | `node-app/src/server.ts` |
+
+---
+
 ## Advanced Notes
 
 - **Snapshot structure**: Designed for future LLM analysis; JSON schema is self-contained.

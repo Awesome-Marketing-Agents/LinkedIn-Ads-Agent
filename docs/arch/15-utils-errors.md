@@ -102,3 +102,52 @@ Exception hierarchy
 - `RateLimitError` passes `endpoint` to parent; `retry_after` is stored in `details` and as attribute.
 - `display()` uses `rich.panel.Panel` and `rich.text.Text` for formatted output.
 - `handle_error` catches `LinkedInActionCenterError` and calls `display()`; otherwise uses generic formatting.
+
+---
+
+## Node.js Equivalent
+
+- **Python:** `utils/errors.py` --> **Node.js:** `node-app/src/errors.ts`
+- The same class hierarchy is fully ported as TypeScript classes extending the built-in `Error` class.
+- All 8 error classes are preserved: `LinkedInActionCenterError`, `AuthenticationError`, `TokenExpiredError`, `LinkedInAPIError`, `RateLimitError`, `ValidationError`, `ConfigurationError`, `StorageError`, `DataFetchError`.
+- The same `handleError()` function is ported.
+- No Rich dependency; errors use standard `console.error()` output instead of Rich panels.
+
+```typescript
+export class LinkedInActionCenterError extends Error {
+  details: Record<string, unknown>;
+
+  constructor(message: string, details: Record<string, unknown> = {}) {
+    super(message);
+    this.name = "LinkedInActionCenterError";
+    this.details = details;
+  }
+
+  display(): void {
+    console.error(`[${this.name}] ${this.message}`);
+    if (Object.keys(this.details).length > 0) {
+      console.error("Details:", JSON.stringify(this.details, null, 2));
+    }
+  }
+}
+
+export class AuthenticationError extends LinkedInActionCenterError { ... }
+export class TokenExpiredError extends AuthenticationError { ... }
+export class LinkedInAPIError extends LinkedInActionCenterError { ... }
+export class RateLimitError extends LinkedInAPIError { ... }
+export class ValidationError extends LinkedInActionCenterError { ... }
+export class ConfigurationError extends LinkedInActionCenterError { ... }
+export class StorageError extends LinkedInActionCenterError { ... }
+export class DataFetchError extends LinkedInActionCenterError { ... }
+
+export function handleError(error: unknown, showTraceback = false): void {
+  if (error instanceof LinkedInActionCenterError) {
+    error.display();
+  } else if (error instanceof Error) {
+    console.error(`Error: ${error.message}`);
+  }
+  if (showTraceback && error instanceof Error) {
+    console.error(error.stack);
+  }
+}
+```

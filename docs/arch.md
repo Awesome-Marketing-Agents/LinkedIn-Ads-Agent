@@ -82,6 +82,206 @@ The architecture separates concerns into **node modules** (data operations) and 
 
 ---
 
+## Node.js Migration
+
+The LinkedIn Ads Action Center has been ported to Node.js/TypeScript. The new codebase lives in the `node-app/` directory at the project root and preserves the same architecture, module boundaries, and Node/Brain separation as the Python version.
+
+### Node.js High-Level Component Diagram
+
+```
++-------------------------------------------------------------+
+|                      USER INTERFACES                         |
++-------------------------------------------------------------+
+|  * CLI (Commander.js)                                        |
+|  * Web Dashboard (React SPA served by Fastify)               |
+|  * OAuth Callback (Fastify route)                            |
++-------------------------------------------------------------+
+                              |
++-------------------------------------------------------------+
+|                      CORE NODE MODULES                       |
++-------------------------------------------------------------+
+|                                                              |
+|  +------------------+    +------------------+                |
+|  |   auth/          |    |   ingestion/     |                |
+|  |  - manager.ts    |    |  - client.ts     |                |
+|  |  - callback.ts   |    |  - fetchers.ts   |                |
+|  |                  |    |  - metrics.ts    |                |
+|  +------------------+    +------------------+                |
+|                                                              |
+|  +------------------+    +------------------+                |
+|  |   storage/       |    |   utils/         |                |
+|  |  - database.ts   |    |  - logger.ts     |                |
+|  |  - repository.ts |    |  - errors.ts     |                |
+|  |  - snapshot.ts   |    |                  |                |
+|  +------------------+    +------------------+                |
+|                                                              |
++-------------------------------------------------------------+
+                              |
++-------------------------------------------------------------+
+|                  LLM BRAIN MODULES (Future)                  |
++-------------------------------------------------------------+
+|  * analysis/     - Performance analysis                      |
+|  * agent/        - LLM reasoning engine                      |
+|  * models/       - Prompt templates and schemas              |
++-------------------------------------------------------------+
+                              |
++-------------------------------------------------------------+
+|                    EXTERNAL SERVICES                         |
++-------------------------------------------------------------+
+|  * LinkedIn Ads API (ads-api.linkedin.com)                   |
+|  * LLM Provider (OpenAI, Anthropic, etc.)                    |
++-------------------------------------------------------------+
+```
+
+### Node.js Module APIs (TypeScript Equivalents)
+
+Each Python module has a direct TypeScript counterpart:
+
+| Python Module | Node.js Equivalent | Notes |
+|---|---|---|
+| `core/config.py` | `node-app/src/config.ts` | `dotenv` + `zod` schema validation (fails fast) |
+| `core/constants.py` | `node-app/src/constants.ts` | `as const` for immutable values |
+| `auth/manager.py` | `node-app/src/auth/manager.ts` | Same `AuthManager` class |
+| `auth/callback.py` | `node-app/src/auth/callback.ts` | Fastify route instead of FastAPI |
+| `ingestion/client.py` | `node-app/src/ingestion/client.ts` | `undici`/`fetch` instead of `requests` |
+| `ingestion/fetchers.py` | `node-app/src/ingestion/fetchers.ts` | `Promise.all` for parallel fetching |
+| `ingestion/metrics.py` | `node-app/src/ingestion/metrics.ts` | Same metric fetching logic |
+| `storage/database.ts` | `node-app/src/storage/database.ts` | `better-sqlite3` instead of `sqlite3` |
+| `storage/repository.py` | `node-app/src/storage/repository.ts` | Same upsert logic |
+| `storage/snapshot.py` | `node-app/src/storage/snapshot.ts` | Same snapshot assembly |
+| `utils/logger.py` | `node-app/src/logger.ts` | Pino (Fastify default) instead of Rich |
+| `utils/errors.py` | `node-app/src/errors.ts` | TypeScript classes extending `Error` |
+| `cli.py` | `node-app/src/cli.ts` | Commander.js instead of argparse |
+| `main.py` | `node-app/src/server.ts` | Fastify instead of Flask |
+
+### Node.js Data Flow: Parallel Fetching
+
+The Node.js version takes advantage of asynchronous I/O to fetch data in parallel where possible, unlike the sequential Python implementation:
+
+```
++-------------------------------------------------------------+
+| 1. User initiates sync (CLI or Web)                          |
++-------------------------------------------------------------+
+                              |
++-------------------------------------------------------------+
+| 2. authManager.getAccessToken()                              |
+|    - Validates token expiry                                  |
+|    - Auto-refreshes if needed (await)                        |
++-------------------------------------------------------------+
+                              |
++-------------------------------------------------------------+
+| 3. Parallel data fetching via Promise.all()                  |
+|    a) fetchAdAccounts(client)                                |
+|    b) For each account (Promise.all per account):            |
+|       - fetchCampaigns(client, accountId)                    |
+|       - fetchCreatives(client, accountId, campaignIds)       |
+|    c) Promise.all for metrics:                               |
+|       - fetchCampaignMetrics(client, campaignIds, dates)     |
+|       - fetchCreativeMetrics(client, campaignIds, dates)     |
+|       - fetchDemographics(client, accountId, campaignIds)    |
++-------------------------------------------------------------+
+                              |
++-------------------------------------------------------------+
+| 4. assembleSnapshot()                                        |
+|    - Same transformation logic as Python                     |
+|    - Same derived KPIs (CTR, CPC, etc.)                      |
++-------------------------------------------------------------+
+                              |
++-------------------------------------------------------------+
+| 5. Parallel persistence via Promise.all():                   |
+|    a) persistSnapshot(snapshot) --> SQLite (better-sqlite3)   |
+|    b) saveSnapshotToDisk(snapshot) --> snapshots/{ts}.json    |
++-------------------------------------------------------------+
+                              |
++-------------------------------------------------------------+
+| 6. Return status to user interface                           |
++-------------------------------------------------------------+
+```
+
+### Node/Brain Boundary in Node.js
+
+The Node/Brain boundary is fully preserved in the Node.js version. The same separation of concerns applies:
+
+- **NODE (Data Operations):** Fastify server, Commander.js CLI, LinkedIn API client, SQLite persistence -- all TypeScript modules handle data operations only.
+- **BRAIN (LLM-Powered Analysis):** Receives structured JSON snapshots, returns recommendation schemas. No direct API or database access.
+
+The interface contracts (SnapshotInterface, RecommendationInterface, ActionInterface) are defined as TypeScript types/interfaces, providing compile-time type safety that the Python version achieves only through runtime TypedDict checks.
+
+### Node.js `node-app/` Directory Structure
+
+```
+node-app/
+  package.json
+  tsconfig.json
+  src/
+    config.ts
+    constants.ts
+    errors.ts
+    logger.ts
+    server.ts            # Fastify web server (replaces main.py)
+    cli.ts               # Commander.js CLI (replaces cli.py)
+    auth/
+      manager.ts
+      callback.ts
+    ingestion/
+      client.ts
+      fetchers.ts
+      metrics.ts
+    storage/
+      database.ts
+      repository.ts
+      snapshot.ts
+  tests/
+    ...
+  logs/
+    app.log
+```
+
+### Node.js Key Files
+
+| File | Purpose |
+|------|---------|
+| `node-app/src/cli.ts` | Commander.js CLI entry point |
+| `node-app/src/server.ts` | Fastify web server + React SPA |
+| `node-app/src/auth/manager.ts` | OAuth token management |
+| `node-app/src/auth/callback.ts` | Fastify OAuth callback route |
+| `node-app/src/ingestion/client.ts` | HTTP client for LinkedIn API |
+| `node-app/src/ingestion/fetchers.ts` | Data fetching functions |
+| `node-app/src/ingestion/metrics.ts` | Analytics fetching |
+| `node-app/src/storage/database.ts` | SQLite schema (better-sqlite3) |
+| `node-app/src/storage/repository.ts` | Database persistence |
+| `node-app/src/storage/snapshot.ts` | Snapshot assembly |
+| `node-app/src/logger.ts` | Pino logging configuration |
+| `node-app/src/errors.ts` | Custom exception classes |
+| `node-app/src/config.ts` | Environment config with zod validation |
+| `node-app/src/constants.ts` | API URLs and scopes |
+
+### Node.js Common Commands
+
+```bash
+# Install dependencies
+cd node-app && npm install
+
+# Run CLI
+npx ts-node src/cli.ts status
+npx ts-node src/cli.ts auth
+npx ts-node src/cli.ts sync
+
+# Run web server (Fastify + React SPA)
+npx ts-node src/server.ts
+
+# Run tests
+npm test
+
+# Build for production
+npm run build
+
+# Check logs
+cat node-app/logs/app.log
+```
+
+---
+
 ## Module APIs and Data Flows
 
 ### 1. Authentication Module (`auth/`)

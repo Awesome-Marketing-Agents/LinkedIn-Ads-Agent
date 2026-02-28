@@ -87,3 +87,35 @@ Module import
 - Console formatter: `%(message)s` only; Rich adds level, time, path.
 - File formatter: `%(asctime)s | %(name)s | %(levelname)s | %(message)s`.
 - `force_terminal=True` on Rich Console ensures colors even when stdout is redirected.
+
+---
+
+## Node.js Equivalent
+
+- **Python:** `utils/logger.py` (Rich) --> **Node.js:** `node-app/src/logger.ts` (Pino)
+- Pino is the default logger for Fastify, making it the natural choice for the Node.js migration. It provides structured JSON logging out of the box.
+- Uses Pino multistream to output to two destinations simultaneously:
+  - Pretty-printed console output (via `pino-pretty`) for development.
+  - JSON file output to `logs/app.log` for production and log aggregation.
+- The same convenience function pattern is preserved, but implemented as Pino child loggers rather than standalone functions. Child loggers automatically inherit the parent configuration and add contextual fields.
+
+```typescript
+import pino from "pino";
+import fs from "node:fs";
+import path from "node:path";
+
+const logsDir = path.join(__dirname, "../..", "logs");
+fs.mkdirSync(logsDir, { recursive: true });
+
+const streams = [
+  { stream: require("pino-pretty")({ colorize: true }) },
+  { stream: fs.createWriteStream(path.join(logsDir, "app.log"), { flags: "a" }) },
+];
+
+export const logger = pino({ level: "info" }, pino.multistream(streams));
+
+// Child loggers for domain-specific logging
+export const apiLogger = logger.child({ module: "api" });
+export const authLogger = logger.child({ module: "auth" });
+export const syncLogger = logger.child({ module: "sync" });
+```

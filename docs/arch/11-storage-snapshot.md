@@ -99,3 +99,34 @@ Raw API data
 - Designed for LLM consumption; structure is self-contained and human-readable.
 - `default=str` in `json.dumps` handles non-JSON-serializable types (e.g. datetime).
 - `metrics_summary` and `daily_metrics` use different structures; repository maps both to DB columns.
+
+---
+
+## Node.js Equivalent
+
+**File**: `node-app/src/storage/snapshot.ts`
+
+The Node.js port replaces `storage/snapshot.py` with a line-by-line TypeScript port of all 397 lines of transformation logic.
+
+### Key Mappings
+
+| Python | Node.js |
+|--------|---------|
+| `storage/snapshot.py` | `node-app/src/storage/snapshot.ts` |
+| `_extract_id_from_urn(urn)` | `_extractIdFromUrn(urn)` |
+| `_aggregate_metrics(rows)` | `_aggregateMetrics(rows)` |
+| `_daily_time_series(rows)` | `_dailyTimeSeries(rows)` |
+| `_top_demographics(rows, top_n)` | `_topDemographics(rows, topN)` |
+| `assemble_snapshot(...)` | `assembleSnapshot(...)` |
+| `save_snapshot_json(snap, path)` | `saveSnapshotJson(snap, path)` |
+
+### Preserved Patterns
+
+- **All enum maps preserved** -- seniority, company size, job function, industry, and country lookup maps are identical to the Python originals.
+- **Same `assembleSnapshot()`** assembly logic: index metrics by campaign ID and creative URN, attach creatives to campaigns, compute aggregates and daily time series, build top-10 demographics per pivot.
+- **Same `saveSnapshotJson()`** -- writes snapshot to a timestamped JSON file in the snapshots directory.
+- **Same helper functions** -- `_extractIdFromUrn()`, `_aggregateMetrics()`, `_dailyTimeSeries()`, and `_topDemographics()` follow identical logic.
+
+### Key Difference
+
+The Python version uses `json.dumps(snap, default=str)` to handle `datetime` serialization. The Node.js version uses `JSON.stringify` with a custom **`replacer` function** for date serialization, achieving the same output format.

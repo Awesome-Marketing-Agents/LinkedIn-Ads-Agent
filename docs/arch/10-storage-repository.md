@@ -97,3 +97,31 @@ persist_snapshot(snap)
 - Field mapping: API uses camelCase (e.g. `dailyBudget`); repository expects snake_case from snapshot (e.g. `daily_budget`).
 - `creative_id` in `creative_daily_metrics` can be URN or ID depending on snapshot.
 - All upserts use parameterized queries to avoid SQL injection.
+
+---
+
+## Node.js Equivalent
+
+**File**: `node-app/src/storage/repository.ts`
+
+The Node.js port replaces `storage/repository.py` with an equivalent TypeScript module that adds transactional safety via `better-sqlite3` transactions.
+
+### Key Mappings
+
+| Python | Node.js |
+|--------|---------|
+| `storage/repository.py` | `node-app/src/storage/repository.ts` |
+| `persist_snapshot(snap)` | `persistSnapshot(snap)` |
+| `table_counts()` | `tableCounts()` |
+| `active_campaign_audit()` | `activeCampaignAudit()` |
+
+### Preserved Patterns
+
+- **Same `persistSnapshot()` flow** -- iterates accounts, campaigns, metrics, creatives, and demographics using `INSERT OR REPLACE`.
+- **Same `tableCounts()`** -- returns a `Record<string, number>` of row counts for all six tables.
+- **Same `activeCampaignAudit()`** -- flags campaigns with LAN enabled, Audience Expansion ON, or CPM cost type.
+- **Prepared statements** with parameterized queries to prevent SQL injection.
+
+### Key Improvement
+
+The Node.js version wraps all upserts inside a **`better-sqlite3` transaction**, ensuring **atomic persistence** -- either all tables are written successfully or none are. The Python version calls `conn.commit()` once at the end, which achieves a similar effect but does not explicitly use a transaction wrapper. The Node.js approach makes the atomicity guarantee explicit and handles rollback automatically on any error.

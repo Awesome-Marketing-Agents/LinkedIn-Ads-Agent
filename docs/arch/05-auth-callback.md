@@ -76,6 +76,15 @@ start_auth_flow()
 
 ---
 
+## Node.js Equivalent
+
+- `auth/callback.py` (FastAPI on port 5000) is replaced by `node-app/src/auth/callback.ts` (a Fastify route plugin).
+- No separate server is needed; the callback is a Fastify route plugin registered on the main server.
+- This eliminates the port conflict between Flask and FastAPI that exists in the Python version.
+- The same state validation and CSRF protection logic is preserved.
+
+---
+
 ## Advanced Notes
 
 - The CLI (`cli.py`) does **not** use this module; it uses interactive `input()` for the code.

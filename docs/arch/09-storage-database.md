@@ -88,3 +88,33 @@ Repository / Tests
 - Primary keys: `ad_accounts.id`, `campaigns.id`, `creatives.id` (TEXT for creatives); composite keys for metrics tables.
 - `fetched_at` columns store ISO timestamps for audit.
 - Derived metrics (ctr, cpc) are stored in metrics tables, not computed on read.
+
+---
+
+## Node.js Equivalent
+
+**Files**: `node-app/src/storage/database.ts` + `node-app/src/storage/schema.ts`
+
+The Node.js port splits `storage/database.py` into two files: one for connection management and raw schema init, and one for type-safe table definitions via Drizzle ORM.
+
+### Key Mappings
+
+| Python | Node.js |
+|--------|---------|
+| `storage/database.py` | `node-app/src/storage/database.ts` (connection + raw SQL schema) |
+| -- | `node-app/src/storage/schema.ts` (Drizzle ORM table definitions) |
+| `sqlite3` (stdlib) | `better-sqlite3` (synchronous C binding) |
+| `_SCHEMA` SQL string | Raw `CREATE TABLE IF NOT EXISTS` statements in `database.ts` |
+
+### Preserved Patterns
+
+- **Same WAL mode** (`PRAGMA journal_mode=WAL`) for concurrent read performance.
+- **Same 6 tables** with identical columns: `ad_accounts`, `campaigns`, `creatives`, `campaign_daily_metrics`, `creative_daily_metrics`, `audience_demographics`.
+- **Same idempotent schema application** using `CREATE TABLE IF NOT EXISTS` on every connection.
+- **`get_connection()` equivalent** returns a `better-sqlite3` Database instance.
+
+### Key Additions
+
+- **`schema.ts`** defines all six tables using Drizzle ORM, providing **TypeScript types for all table columns**. This gives compile-time type safety when reading from or writing to the database.
+- **`better-sqlite3`** is a synchronous C binding, which matches the behavior of Python's built-in `sqlite3` module -- no async overhead for local database operations.
+- The raw SQL schema in `database.ts` is used for `CREATE TABLE IF NOT EXISTS` initialization, while the Drizzle schema in `schema.ts` is used for type-safe query building in the repository layer.

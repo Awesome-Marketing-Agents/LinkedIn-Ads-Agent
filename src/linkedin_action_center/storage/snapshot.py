@@ -115,8 +115,92 @@ def _daily_time_series(rows: list[dict]) -> list[dict]:
     return result
 
 
-def _top_demographics(demo_rows: list[dict], top_n: int = 10) -> list[dict]:
+# -- Well-known LinkedIn enum lookups ----------------------------------------
+# These are static mappings for entity types where LinkedIn uses fixed numeric
+# IDs.  They never change, so we can resolve them locally without an API call.
+
+_SENIORITY_MAP = {
+    "1": "Unpaid",
+    "2": "Training",
+    "3": "Entry",
+    "4": "Senior",
+    "5": "Manager",
+    "6": "Director",
+    "7": "VP",
+    "8": "CXO",
+    "9": "Partner",
+    "10": "Owner",
+}
+
+_COMPANY_SIZE_MAP = {
+    "A": "Self-employed (1)",
+    "B": "2–10 employees",
+    "C": "11–50 employees",
+    "D": "51–200 employees",
+    "E": "201–500 employees",
+    "F": "501–1,000 employees",
+    "G": "1,001–5,000 employees",
+    "H": "5,001–10,000 employees",
+    "I": "10,001+ employees",
+}
+
+_JOB_FUNCTION_MAP = {
+    "1": "Accounting",
+    "2": "Administrative",
+    "3": "Arts and Design",
+    "4": "Business Development",
+    "5": "Community & Social Services",
+    "6": "Consulting",
+    "7": "Education",
+    "8": "Engineering",
+    "9": "Entrepreneurship",
+    "10": "Finance",
+    "11": "Healthcare Services",
+    "12": "Human Resources",
+    "13": "Information Technology",
+    "14": "Legal",
+    "15": "Marketing",
+    "16": "Media & Communications",
+    "17": "Military & Protective Services",
+    "18": "Operations",
+    "19": "Product Management",
+    "20": "Program & Project Management",
+    "21": "Purchasing",
+    "22": "Quality Assurance",
+    "23": "Real Estate",
+    "24": "Research",
+    "25": "Sales",
+    "26": "Customer Success & Support",
+}
+
+
+def _resolve_urn_locally(urn: str) -> str:
+    """Best-effort local resolution of a LinkedIn URN to a human name."""
+    s = str(urn)
+    # Extract the type and ID from URNs like "urn:li:seniority:6"
+    parts = s.split(":")
+    if len(parts) < 4:
+        return ""
+    entity_type = parts[2]
+    entity_id = parts[3]
+
+    if entity_type == "seniority":
+        return _SENIORITY_MAP.get(entity_id, "")
+    if entity_type == "companySizeRange" or entity_type == "companySize":
+        return _COMPANY_SIZE_MAP.get(entity_id, "")
+    if entity_type == "function":
+        return _JOB_FUNCTION_MAP.get(entity_id, "")
+    return ""
+
+
+def _top_demographics(
+    demo_rows: list[dict],
+    urn_names: dict[str, str] | None = None,
+    top_n: int = 10,
+) -> list[dict]:
     """Return the *top_n* demographic segments ranked by impressions."""
+    if urn_names is None:
+        urn_names = {}
     sorted_rows = sorted(
         demo_rows, key=lambda r: r.get("impressions", 0), reverse=True,
     )
@@ -125,8 +209,12 @@ def _top_demographics(demo_rows: list[dict], top_n: int = 10) -> list[dict]:
     for r in sorted_rows[:top_n]:
         imp = r.get("impressions", 0)
         clk = r.get("clicks", 0)
+        raw_segment = r.get("pivotValues", ["?"])[0]
+        # Try API-resolved name first, then local enum lookup, then raw URN
+        resolved_name = urn_names.get(raw_segment, "") or _resolve_urn_locally(raw_segment)
         result.append({
-            "segment": r.get("pivotValues", ["?"])[0],
+            "segment": resolved_name or raw_segment,
+            "segment_urn": raw_segment,
             "impressions": imp,
             "clicks": clk,
             "ctr": round(clk / imp * 100, 2) if imp else 0,
@@ -271,17 +359,26 @@ def assemble_snapshot(
             acct_snapshot["campaigns"].append(camp_snapshot)
 
         # Audience demographics
-        acct_demo = None
-        if isinstance(demo_data, dict) and acct_id in demo_data and isinstance(demo_data.get(acct_id), dict):
-            acct_demo = demo_data.get(acct_id, {})
+        acct_demo_raw = None
+        urn_names: dict[str, str] = {}
+        if isinstance(demo_data, dict) and acct_id in demo_data:
+            entry = demo_data.get(acct_id, {})
+            if isinstance(entry, dict) and "pivots" in entry:
+                # New format: {"pivots": {...}, "urn_names": {...}}
+                acct_demo_raw = entry.get("pivots", {})
+                urn_names = entry.get("urn_names", {})
+            elif isinstance(entry, dict):
+                acct_demo_raw = entry
         elif isinstance(demo_data, dict):
             # Backwards compatibility: a single dict[pivot -> rows] reused for all accounts
-            acct_demo = demo_data
+            acct_demo_raw = demo_data
 
-        if isinstance(acct_demo, dict):
-            for pivot, rows in acct_demo.items():
+        if isinstance(acct_demo_raw, dict):
+            for pivot, rows in acct_demo_raw.items():
                 key = str(pivot).lower().replace("member_", "")
-                acct_snapshot["audience_demographics"][key] = _top_demographics(rows or [])
+                acct_snapshot["audience_demographics"][key] = _top_demographics(
+                    rows or [], urn_names=urn_names,
+                )
 
         snapshot["accounts"].append(acct_snapshot)
 

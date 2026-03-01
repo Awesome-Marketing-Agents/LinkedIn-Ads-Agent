@@ -1,11 +1,36 @@
-.env
-.venv/
+# Python
 __pycache__/
-*.pyc
-*.pyo
-personal-notes/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+.pytest_cache/
+
+# Node
+node_modules/
+frontend/dist/
+
+# Environment
+.env
+*.env.local
+
+# Tokens / secrets
 tokens.json
-notebooks/
+
+# Data & logs
 data/
 logs/
-.pytest_cache/
+*.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+personal-notes/
+
+# OS
+.DS_Store
+Thumbs.db

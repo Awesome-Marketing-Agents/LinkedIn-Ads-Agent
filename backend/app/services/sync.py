@@ -13,7 +13,7 @@ from app.crud.demographics import upsert_demographics
 from app.crud.metrics import upsert_campaign_daily_metrics, upsert_creative_daily_metrics, upsert_creatives
 from app.crud.sync_log import finish_sync_run, start_sync_run
 from app.linkedin.client import LinkedInClient
-from app.linkedin.fetchers import fetch_ad_accounts, fetch_campaigns, fetch_creatives
+from app.linkedin.fetchers import fetch_ad_accounts, fetch_campaigns, fetch_creatives, resolve_content_references
 from app.linkedin.metrics import (
     fetch_campaign_metrics,
     fetch_creative_metrics,
@@ -108,6 +108,8 @@ async def run_sync(job: SyncJob, get_session_fn: Any) -> None:
             fetch_demographics(client, all_campaign_ids, date_start, today),
         )
 
+        content_names = await resolve_content_references(client, all_creatives)
+
         job.emit("4-6/6", f"{len(camp_metrics)} campaign metrics, {len(creat_metrics)} creative metrics.")
 
         job.emit("assemble", "Assembling snapshot...")
@@ -115,6 +117,7 @@ async def run_sync(job: SyncJob, get_session_fn: Any) -> None:
             accounts, all_campaigns, all_creatives,
             camp_metrics, creat_metrics, demographics,
             date_start, today,
+            content_names=content_names,
         )
 
         json_path = save_snapshot_json(snapshot)

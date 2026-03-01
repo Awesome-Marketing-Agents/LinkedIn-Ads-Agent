@@ -50,3 +50,42 @@ async def fetch_creatives(
     )
     logger.info("Fetched %d creative(s) for account %d", len(creatives), account_id)
     return creatives
+
+
+async def resolve_content_references(
+    client: LinkedInClient,
+    creatives: list[dict],
+) -> dict[str, str]:
+    """Build human-readable names for content reference URNs.
+
+    Derives display names from the URN type and ID — no extra API calls needed.
+    Returns a mapping of content_reference URN -> display name.
+    """
+    _TYPE_LABELS = {
+        "share": "Sponsored Post",
+        "adInMailContent": "InMail",
+        "video": "Video Ad",
+        "ugcPost": "UGC Post",
+        "adCreativeV2": "Creative",
+    }
+
+    names: dict[str, str] = {}
+    for cr in creatives:
+        ref = cr.get("content", {}).get("reference", "")
+        if not ref:
+            continue
+        if ref in names:
+            continue
+
+        # Extract type and numeric ID from URN like "urn:li:share:12345"
+        parts = ref.split(":")
+        if len(parts) >= 4:
+            entity_type = parts[2]
+            entity_id = parts[3]
+            label = _TYPE_LABELS.get(entity_type, entity_type)
+            names[ref] = f"{label} #{entity_id[-6:]}"
+        else:
+            names[ref] = ref
+
+    logger.info("Labeled %d content references", len(names))
+    return names

@@ -110,6 +110,7 @@ def upsert_creatives(
             "intended_status": cr.get("intended_status"),
             "is_serving": cr.get("is_serving", False),
             "content_reference": cr.get("content_reference"),
+            "content_name": cr.get("content_name"),
             "serving_hold_reasons": hold_reasons,
             "created_at": cr.get("created_at"),
             "last_modified_at": cr.get("last_modified_at"),
@@ -165,15 +166,27 @@ def get_creative_metrics_paginated(
     offset = (page - 1) * page_size
 
     stmt = (
-        select(CreativeDailyMetric)
+        select(
+            CreativeDailyMetric,
+            Creative.content_name.label("content_name"),  # type: ignore[attr-defined]
+            Campaign.name.label("campaign_name"),  # type: ignore[attr-defined]
+        )
+        .outerjoin(Creative, CreativeDailyMetric.creative_id == Creative.id)
+        .outerjoin(Campaign, Creative.campaign_id == Campaign.id)
         .order_by(CreativeDailyMetric.date.desc(), CreativeDailyMetric.creative_id)  # type: ignore[union-attr]
         .offset(offset)
         .limit(page_size)
     )
-    rows = list(session.exec(stmt).all())
+    rows = session.exec(stmt).all()
+    result = []
+    for metric, content_name, campaign_name in rows:
+        d = metric.model_dump()
+        d["content_name"] = content_name
+        d["campaign_name"] = campaign_name
+        result.append(d)
 
     return {
-        "rows": [r.model_dump() for r in rows],
+        "rows": result,
         "total": total,
         "page": page,
         "page_size": page_size,

@@ -58,6 +58,7 @@ def upgrade() -> None:
         sa.Column("intended_status", sa.Text()),
         sa.Column("is_serving", sa.Boolean()),
         sa.Column("content_reference", sa.Text()),
+        sa.Column("content_name", sa.Text()),
         sa.Column("serving_hold_reasons", sa.Text()),
         sa.Column("created_at", sa.BigInteger()),
         sa.Column("last_modified_at", sa.BigInteger()),

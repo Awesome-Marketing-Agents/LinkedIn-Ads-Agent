@@ -22,7 +22,8 @@ const campaignColumns = [
 ];
 
 const creativeColumns = [
-  { key: "creative_id", label: "Creative" },
+  { key: "campaign_name", label: "Campaign" },
+  { key: "content_name", label: "Content" },
   { key: "date", label: "Date" },
   { key: "impressions", label: "Impr.", align: "right" as const },
   { key: "clicks", label: "Clicks", align: "right" as const },

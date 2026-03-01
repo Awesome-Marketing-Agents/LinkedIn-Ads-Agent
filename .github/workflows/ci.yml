@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+
+      # - name: ruff-action
+      #   uses: astral-sh/ruff-action@v3.5.1
+      #   with:
+      #     src: "./src"
+
+      - name: Sync dependencies with uv (locked)
+        run: |
+          uv sync --frozen
+          uv pip install pytest
+
+      - name: Run tests
+        run: |
+          export PYTHONPATH=.
+          uv run pytest -q
+      

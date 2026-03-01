@@ -1,123 +1,151 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable } from "@/components/tables/DataTable";
-import { cn } from "@/lib/utils";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  useCampaignMetrics,
+  useCreativeMetrics,
+  useDemographics,
+} from "@/hooks/useReport";
 
-type Mode = "campaign_daily" | "creative_daily" | "demographics";
+export const Route = createFileRoute("/report")({
+  component: ReportPage,
+});
 
-const tabs: { key: Mode; label: string }[] = [
-  { key: "campaign_daily", label: "Campaigns" },
-  { key: "creative_daily", label: "Creatives" },
-  { key: "demographics", label: "Demographics" },
-];
+const fmtNum = (v: unknown) => Number(v ?? 0).toLocaleString();
+const fmtDollar = (v: unknown) => `$${Number(v ?? 0).toFixed(2)}`;
+const fmtPct = (v: unknown) => `${Number(v ?? 0).toFixed(2)}%`;
 
 const campaignColumns = [
   { key: "campaign_name", label: "Campaign" },
   { key: "date", label: "Date" },
-  { key: "impressions", label: "Impr.", align: "right" as const },
-  { key: "clicks", label: "Clicks", align: "right" as const },
-  { key: "spend", label: "Spend", align: "right" as const },
-  { key: "ctr", label: "CTR", align: "right" as const },
-  { key: "cpc", label: "CPC", align: "right" as const },
+  { key: "impressions", label: "Impr.", align: "right" as const, format: fmtNum },
+  { key: "clicks", label: "Clicks", align: "right" as const, format: fmtNum },
+  { key: "spend", label: "Spend", align: "right" as const, format: fmtDollar },
+  { key: "ctr", label: "CTR", align: "right" as const, format: fmtPct },
+  { key: "cpc", label: "CPC", align: "right" as const, format: fmtDollar },
 ];
 
 const creativeColumns = [
   { key: "campaign_name", label: "Campaign" },
   { key: "content_name", label: "Content" },
   { key: "date", label: "Date" },
-  { key: "impressions", label: "Impr.", align: "right" as const },
-  { key: "clicks", label: "Clicks", align: "right" as const },
-  { key: "spend", label: "Spend", align: "right" as const },
-  { key: "ctr", label: "CTR", align: "right" as const },
+  { key: "impressions", label: "Impr.", align: "right" as const, format: fmtNum },
+  { key: "clicks", label: "Clicks", align: "right" as const, format: fmtNum },
+  { key: "spend", label: "Spend", align: "right" as const, format: fmtDollar },
+  { key: "ctr", label: "CTR", align: "right" as const, format: fmtPct },
 ];
 
 const demoColumns = [
   { key: "pivot_type", label: "Pivot" },
   { key: "segment", label: "Segment" },
-  { key: "impressions", label: "Impr.", align: "right" as const },
-  { key: "clicks", label: "Clicks", align: "right" as const },
-  { key: "ctr", label: "CTR", align: "right" as const },
-  { key: "share_pct", label: "Share %", align: "right" as const },
+  { key: "impressions", label: "Impr.", align: "right" as const, format: fmtNum },
+  { key: "clicks", label: "Clicks", align: "right" as const, format: fmtNum },
+  { key: "ctr", label: "CTR", align: "right" as const, format: fmtPct },
+  { key: "share_pct", label: "Share %", align: "right" as const, format: fmtPct },
 ];
 
-export const Route = createFileRoute("/report")({
-  component: ReportPage,
-});
-
-function ReportPage() {
-  const [mode, setMode] = useState<Mode>("campaign_daily");
-  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+function CampaignTab() {
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    setLoading(true);
-    let url: string;
-
-    if (mode === "campaign_daily") {
-      url = `/api/v1/report/campaign-metrics?page=${page}&page_size=50`;
-    } else if (mode === "creative_daily") {
-      url = `/api/v1/report/creative-metrics?page=${page}&page_size=50`;
-    } else {
-      url = "/api/v1/report/demographics";
-    }
-
-    fetch(url)
-      .then((r) => r.json())
-      .then((data) => {
-        setRows((data.rows as Record<string, unknown>[]) ?? []);
-        setTotalPages((data.total_pages as number) ?? 1);
-      })
-      .finally(() => setLoading(false));
-  }, [mode, page]);
-
-  const columns =
-    mode === "campaign_daily"
-      ? campaignColumns
-      : mode === "creative_daily"
-        ? creativeColumns
-        : demoColumns;
+  const { data, isLoading } = useCampaignMetrics(page);
+  const rows = (data as Record<string, unknown> | undefined)?.rows as Record<string, unknown>[] ?? [];
+  const totalPages = (data as Record<string, unknown> | undefined)?.total_pages as number ?? 1;
 
   return (
+    <DataTable
+      columns={campaignColumns}
+      rows={rows}
+      page={page}
+      totalPages={totalPages}
+      onPageChange={setPage}
+      loading={isLoading}
+      exportFilename="campaign-metrics"
+    />
+  );
+}
+
+function CreativeTab() {
+  const [page, setPage] = useState(1);
+  const { data, isLoading } = useCreativeMetrics(page);
+  const rows = (data as Record<string, unknown> | undefined)?.rows as Record<string, unknown>[] ?? [];
+  const totalPages = (data as Record<string, unknown> | undefined)?.total_pages as number ?? 1;
+
+  return (
+    <DataTable
+      columns={creativeColumns}
+      rows={rows}
+      page={page}
+      totalPages={totalPages}
+      onPageChange={setPage}
+      loading={isLoading}
+      exportFilename="creative-metrics"
+    />
+  );
+}
+
+function DemographicsTab() {
+  const [pivotType, setPivotType] = useState<string | undefined>();
+  const { data, isLoading } = useDemographics(pivotType);
+  const rows = (data as Record<string, unknown> | undefined)?.rows as Record<string, unknown>[] ?? [];
+
+  return (
+    <div className="space-y-3">
+      <Select
+        value={pivotType ?? "all"}
+        onValueChange={(v) => setPivotType(v === "all" ? undefined : v)}
+      >
+        <SelectTrigger className="w-[200px] h-8 text-[12px]">
+          <SelectValue placeholder="All pivot types" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all" className="text-[12px]">All pivot types</SelectItem>
+          <SelectItem value="MEMBER_COMPANY_SIZE" className="text-[12px]">Company Size</SelectItem>
+          <SelectItem value="MEMBER_INDUSTRY" className="text-[12px]">Industry</SelectItem>
+          <SelectItem value="MEMBER_SENIORITY" className="text-[12px]">Seniority</SelectItem>
+          <SelectItem value="MEMBER_JOB_FUNCTION" className="text-[12px]">Job Function</SelectItem>
+          <SelectItem value="MEMBER_COUNTRY_V2" className="text-[12px]">Country</SelectItem>
+          <SelectItem value="MEMBER_REGION_V2" className="text-[12px]">Region</SelectItem>
+        </SelectContent>
+      </Select>
+      <DataTable
+        columns={demoColumns}
+        rows={rows}
+        loading={isLoading}
+        exportFilename="demographics"
+      />
+    </div>
+  );
+}
+
+function ReportPage() {
+  return (
     <>
-      <header className="sticky top-0 z-40 flex h-12 items-center border-b border-border bg-background/80 backdrop-blur-sm px-6">
-        <h2 className="text-[13px] font-semibold">Tables</h2>
-      </header>
-
+      <PageHeader title="Tables" />
       <div className="p-6">
-        {/* Tab bar — underline style, not button pills */}
-        <div className="flex gap-4 border-b border-border mb-4">
-          {tabs.map((t) => (
-            <button
-              key={t.key}
-              onClick={() => {
-                setMode(t.key);
-                setPage(1);
-              }}
-              className={cn(
-                "pb-2 text-[13px] font-medium border-b-2 transition-colors -mb-px",
-                mode === t.key
-                  ? "border-primary text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-
-        {loading ? (
-          <div className="text-[13px] text-muted-foreground py-8">Loading...</div>
-        ) : (
-          <DataTable
-            columns={columns}
-            rows={rows}
-            page={mode !== "demographics" ? page : undefined}
-            totalPages={mode !== "demographics" ? totalPages : undefined}
-            onPageChange={mode !== "demographics" ? setPage : undefined}
-          />
-        )}
+        <Tabs defaultValue="campaigns">
+          <TabsList>
+            <TabsTrigger value="campaigns" className="text-[13px]">Campaigns</TabsTrigger>
+            <TabsTrigger value="creatives" className="text-[13px]">Creatives</TabsTrigger>
+            <TabsTrigger value="demographics" className="text-[13px]">Demographics</TabsTrigger>
+          </TabsList>
+          <TabsContent value="campaigns" className="mt-4">
+            <CampaignTab />
+          </TabsContent>
+          <TabsContent value="creatives" className="mt-4">
+            <CreativeTab />
+          </TabsContent>
+          <TabsContent value="demographics" className="mt-4">
+            <DemographicsTab />
+          </TabsContent>
+        </Tabs>
       </div>
     </>
   );

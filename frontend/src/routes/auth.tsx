@@ -1,5 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuthStatus, useStartAuth } from "@/hooks/useAuth";
+import { PageHeader } from "@/components/layout/PageHeader";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/auth")({
@@ -14,60 +25,69 @@ function AuthPage() {
 
   return (
     <>
-      <header className="sticky top-0 z-40 flex h-12 items-center border-b border-border bg-background/80 backdrop-blur-sm px-6">
-        <h2 className="text-[13px] font-semibold">Connection</h2>
-      </header>
-
+      <PageHeader title="Connection" />
       <div className="p-6 max-w-xl">
         {isLoading ? (
-          <div className="rounded-lg border border-border bg-card px-4 py-6">
-            <div className="text-[13px] text-muted-foreground">Loading token status...</div>
-          </div>
+          <Card>
+            <CardHeader>
+              <Skeleton className="h-4 w-32" />
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Skeleton className="h-4 w-48" />
+              <Skeleton className="h-2 w-full" />
+              <Skeleton className="h-4 w-48" />
+              <Skeleton className="h-2 w-full" />
+            </CardContent>
+          </Card>
         ) : connected ? (
-          <div className="space-y-3">
-            <div className="rounded-lg border border-border bg-card px-4 py-4">
-              <div className="flex items-center justify-between mb-3">
-                <div className="text-[13px] font-semibold">LinkedIn OAuth</div>
-                <span className="rounded-full bg-signal-positive/10 px-2 py-0.5 text-[10px] font-medium text-signal-positive">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-[13px]">LinkedIn OAuth</CardTitle>
+                <Badge variant="outline" className="border-signal-positive/30 bg-signal-positive/10 text-signal-positive">
                   Connected
-                </span>
+                </Badge>
               </div>
-
-              <div className="space-y-2">
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <TokenRow
+                label="Access token"
+                days={status!.access_token_days_remaining ?? 0}
+                maxDays={60}
+              />
+              {status!.refresh_token_days_remaining != null && (
                 <TokenRow
-                  label="Access token"
-                  days={status!.access_token_days_remaining ?? 0}
-                  maxDays={60}
+                  label="Refresh token"
+                  days={status!.refresh_token_days_remaining}
+                  maxDays={365}
                 />
-                {status!.refresh_token_days_remaining != null && (
-                  <TokenRow
-                    label="Refresh token"
-                    days={status!.refresh_token_days_remaining}
-                    maxDays={365}
-                  />
-                )}
-              </div>
-
+              )}
               {status!.saved_at && (
-                <div className="text-[11px] text-muted-foreground mt-3 pt-3 border-t border-edge-soft">
+                <div className="text-[11px] text-muted-foreground pt-3 border-t border-edge-soft">
                   Token saved {status!.saved_at}
                 </div>
               )}
-            </div>
-          </div>
+            </CardContent>
+          </Card>
         ) : (
-          <div className="rounded-lg border border-border bg-card px-4 py-4">
-            <div className="text-[13px] font-semibold mb-1">Connect LinkedIn</div>
-            <div className="text-[13px] text-muted-foreground mb-4">
-              Authorize this app to read your ad account data via LinkedIn's Marketing API.
-            </div>
-            <button
-              onClick={startAuth}
-              className="rounded-md bg-primary px-3.5 py-1.5 text-[13px] font-medium text-primary-foreground hover:opacity-90 transition-opacity"
-            >
-              Authorize with LinkedIn
-            </button>
-          </div>
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-[13px]">Connect LinkedIn</CardTitle>
+                <Badge variant="outline" className="border-signal-error/30 bg-signal-error/10 text-signal-error">
+                  Disconnected
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <p className="text-[13px] text-muted-foreground mb-4">
+                Authorize this app to read your ad account data via LinkedIn's Marketing API.
+              </p>
+              <Button onClick={startAuth}>
+                Authorize with LinkedIn
+              </Button>
+            </CardContent>
+          </Card>
         )}
       </div>
     </>
@@ -88,7 +108,7 @@ function TokenRow({
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-1">
+      <div className="flex items-center justify-between mb-1.5">
         <span className="text-[11px] text-muted-foreground">{label}</span>
         <span
           className={cn(
@@ -99,15 +119,10 @@ function TokenRow({
           {days}d remaining
         </span>
       </div>
-      <div className="h-1 rounded-full bg-edge-soft overflow-hidden">
-        <div
-          className={cn(
-            "h-full rounded-full transition-all",
-            urgent ? "bg-signal-warning" : "bg-primary",
-          )}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
+      <Progress
+        value={pct}
+        className={cn("h-1.5", urgent && "[&>div]:bg-signal-warning")}
+      />
     </div>
   );
 }

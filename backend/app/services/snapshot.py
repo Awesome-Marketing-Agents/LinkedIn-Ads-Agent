@@ -21,6 +21,7 @@ from app.models.linkedin_api import (
     LinkedInDemographicRow,
 )
 from app.utils.logging import get_logger
+from app.utils.urn_resolve import resolve_urn as _resolve_urn_locally
 
 logger = get_logger(__name__)
 
@@ -94,42 +95,6 @@ def _daily_time_series(rows: list[dict]) -> list[dict]:
         d["cpc"] = round(d["spend"] / clk, 2) if clk else 0
         result.append(d)
     return result
-
-
-_SENIORITY_MAP = {
-    "1": "Unpaid", "2": "Training", "3": "Entry", "4": "Senior",
-    "5": "Manager", "6": "Director", "7": "VP", "8": "CXO",
-    "9": "Partner", "10": "Owner",
-}
-_COMPANY_SIZE_MAP = {
-    "A": "Self-employed (1)", "B": "2-10 employees", "C": "11-50 employees",
-    "D": "51-200 employees", "E": "201-500 employees", "F": "501-1,000 employees",
-    "G": "1,001-5,000 employees", "H": "5,001-10,000 employees", "I": "10,001+ employees",
-}
-_JOB_FUNCTION_MAP = {
-    "1": "Accounting", "2": "Administrative", "3": "Arts and Design",
-    "4": "Business Development", "5": "Community & Social Services", "6": "Consulting",
-    "7": "Education", "8": "Engineering", "9": "Entrepreneurship", "10": "Finance",
-    "11": "Healthcare Services", "12": "Human Resources", "13": "Information Technology",
-    "14": "Legal", "15": "Marketing", "16": "Media & Communications",
-    "17": "Military & Protective Services", "18": "Operations", "19": "Product Management",
-    "20": "Program & Project Management", "21": "Purchasing", "22": "Quality Assurance",
-    "23": "Real Estate", "24": "Research", "25": "Sales", "26": "Customer Success & Support",
-}
-
-
-def _resolve_urn_locally(urn: str) -> str:
-    parts = str(urn).split(":")
-    if len(parts) < 4:
-        return ""
-    entity_type, entity_id = parts[2], parts[3]
-    if entity_type == "seniority":
-        return _SENIORITY_MAP.get(entity_id, "")
-    if entity_type in ("companySizeRange", "companySize"):
-        return _COMPANY_SIZE_MAP.get(entity_id, "")
-    if entity_type == "function":
-        return _JOB_FUNCTION_MAP.get(entity_id, "")
-    return ""
 
 
 def _top_demographics(

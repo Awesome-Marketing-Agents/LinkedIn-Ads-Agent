@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlmodel import Session, select
 
 from app.models.demographics import AudienceDemographic
+from app.utils.urn_resolve import resolve_urn
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -59,4 +60,32 @@ def get_demographics(
             AudienceDemographic.pivot_type,
             AudienceDemographic.impressions.desc(),  # type: ignore[union-attr]
         )
-    return [r.model_dump() for r in session.exec(stmt).all()]
+    results = []
+    for r in session.exec(stmt).all():
+        row = r.model_dump()
+        seg = row.get("segment", "")
+        if seg.startswith("urn:li:"):
+            resolved = resolve_urn(seg)
+            if resolved:
+                row["segment"] = resolved
+        elif seg.startswith("SIZE_"):
+            row["segment"] = _prettify_size(seg)
+        results.append(row)
+    return results
+
+
+_SIZE_LABELS = {
+    "SIZE_1": "Self-employed",
+    "SIZE_2_TO_10": "2-10",
+    "SIZE_11_TO_50": "11-50",
+    "SIZE_51_TO_200": "51-200",
+    "SIZE_201_TO_500": "201-500",
+    "SIZE_501_TO_1000": "501-1,000",
+    "SIZE_1001_TO_5000": "1,001-5,000",
+    "SIZE_5001_TO_10000": "5,001-10,000",
+    "SIZE_10001_OR_MORE": "10,001+",
+}
+
+
+def _prettify_size(seg: str) -> str:
+    return _SIZE_LABELS.get(seg, seg.replace("SIZE_", "").replace("_", "-"))

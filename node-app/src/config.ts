@@ -3,7 +3,7 @@ import { z } from "zod";
 import path from "node:path";
 import fs from "node:fs";
 
-config();
+config({ path: path.resolve(import.meta.dirname, "../../.env") });
 
 const envSchema = z.object({
   LINKEDIN_CLIENT_ID: z.string().min(1, "LINKEDIN_CLIENT_ID is required"),

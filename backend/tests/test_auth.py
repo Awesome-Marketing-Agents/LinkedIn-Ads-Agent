@@ -1,7 +1,6 @@
 """Tests for AuthManager (async httpx)."""
 
 import json
-import time
 from unittest.mock import AsyncMock, patch
 
 import pytest

@@ -1,6 +1,5 @@
 """Tests for CRUD operations using SQLite in-memory."""
 
-import pytest
 from sqlmodel import Session
 
 from app.crud.accounts import get_accounts, upsert_account

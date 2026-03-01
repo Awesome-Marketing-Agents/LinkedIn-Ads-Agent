@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.core.config import settings
 from app.core.deps import get_auth
@@ -46,13 +46,4 @@ async def auth_callback(request: Request, auth: AuthManager = Depends(get_auth))
     await auth.exchange_code_for_token(code)
     log_auth_event("Full authentication flow complete")
 
-    return """
-    <html>
-      <head><title>Authentication Successful</title></head>
-      <body style="font-family: sans-serif; text-align: center; padding-top: 50px;">
-        <h1 style="color: #0077B5;">Authentication Successful!</h1>
-        <p>You can now close this tab and return to the application.</p>
-        <script>setTimeout(() => window.close(), 3000);</script>
-      </body>
-    </html>
-    """
+    return RedirectResponse(url="http://localhost:5173/auth")

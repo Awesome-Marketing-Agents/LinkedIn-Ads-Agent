@@ -1,5 +1,10 @@
 """Alembic environment targeting PostgreSQL via app.core.config."""
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from logging.config import fileConfig
 
 from alembic import context

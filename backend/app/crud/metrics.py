@@ -41,6 +41,10 @@ def upsert_campaign_daily_metrics(
             "likes": day.get("likes", 0),
             "comments": day.get("comments", 0),
             "shares": day.get("shares", 0),
+            "follows": day.get("follows", 0),
+            "leads": day.get("leads", 0),
+            "opens": day.get("opens", 0),
+            "sends": day.get("sends", 0),
             "ctr": day.get("ctr", 0),
             "cpc": day.get("cpc", 0),
             "fetched_at": now,
@@ -54,11 +58,51 @@ def upsert_campaign_daily_metrics(
         session.exec(stmt)  # type: ignore[call-overload]
 
 
+def upsert_creative_daily_metrics(
+    session: Session, creative: dict, now: str | None = None,
+) -> None:
+    now = now or datetime.now(tz=timezone.utc).isoformat()
+    rows = creative.get("daily_metrics", [])
+    if not rows:
+        return
+
+    for day in rows:
+        values = {
+            "creative_id": creative["id"],
+            "date": day["date"],
+            "impressions": day.get("impressions", 0),
+            "clicks": day.get("clicks", 0),
+            "spend": day.get("spend", 0),
+            "landing_page_clicks": day.get("landing_page_clicks", 0),
+            "conversions": day.get("conversions", 0),
+            "likes": day.get("likes", 0),
+            "comments": day.get("comments", 0),
+            "shares": day.get("shares", 0),
+            "follows": day.get("follows", 0),
+            "leads": day.get("leads", 0),
+            "opens": day.get("opens", 0),
+            "sends": day.get("sends", 0),
+            "ctr": day.get("ctr", 0),
+            "cpc": day.get("cpc", 0),
+            "fetched_at": now,
+        }
+        stmt = insert(CreativeDailyMetric).values(**values)
+        update_cols = {k: stmt.excluded[k] for k in values if k not in ("creative_id", "date")}
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["creative_id", "date"],
+            set_=update_cols,
+        )
+        session.exec(stmt)  # type: ignore[call-overload]
+
+
 def upsert_creatives(
     session: Session, account_id: int, camp: dict, now: str | None = None,
 ) -> None:
     now = now or datetime.now(tz=timezone.utc).isoformat()
     for cr in camp.get("creatives", []):
+        hold_reasons = cr.get("serving_hold_reasons")
+        if isinstance(hold_reasons, list):
+            hold_reasons = ",".join(hold_reasons) if hold_reasons else None
         values = {
             "id": cr.get("id", ""),
             "campaign_id": camp["id"],
@@ -66,6 +110,7 @@ def upsert_creatives(
             "intended_status": cr.get("intended_status"),
             "is_serving": cr.get("is_serving", False),
             "content_reference": cr.get("content_reference"),
+            "serving_hold_reasons": hold_reasons,
             "created_at": cr.get("created_at"),
             "last_modified_at": cr.get("last_modified_at"),
             "fetched_at": now,
@@ -134,6 +179,22 @@ def get_creative_metrics_paginated(
         "page_size": page_size,
         "total_pages": math.ceil(total / page_size) if total else 0,
     }
+
+
+def get_creatives(session: Session) -> list[dict]:
+    """Return all creatives with campaign name via JOIN."""
+    stmt = (
+        select(Creative, Campaign.name.label("campaign_name"))  # type: ignore[attr-defined]
+        .outerjoin(Campaign, Creative.campaign_id == Campaign.id)
+        .order_by(Creative.last_modified_at.desc())  # type: ignore[union-attr]
+    )
+    rows = session.exec(stmt).all()
+    result = []
+    for cr, campaign_name in rows:
+        d = cr.model_dump()
+        d["campaign_name"] = campaign_name
+        result.append(d)
+    return result
 
 
 # ---------------------------------------------------------------------------

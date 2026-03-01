@@ -10,7 +10,8 @@ from app.core.security import AuthManager
 from app.crud.accounts import upsert_account
 from app.crud.campaigns import upsert_campaign
 from app.crud.demographics import upsert_demographics
-from app.crud.metrics import upsert_campaign_daily_metrics, upsert_creatives
+from app.crud.metrics import upsert_campaign_daily_metrics, upsert_creative_daily_metrics, upsert_creatives
+from app.crud.sync_log import finish_sync_run, start_sync_run
 from app.linkedin.client import LinkedInClient
 from app.linkedin.fetchers import fetch_ad_accounts, fetch_campaigns, fetch_creatives
 from app.linkedin.metrics import (
@@ -53,6 +54,8 @@ def create_job(job_id: str) -> SyncJob:
 
 async def run_sync(job: SyncJob, get_session_fn: Any) -> None:
     """Run the full sync pipeline, emitting progress events."""
+    sync_run_id: int | None = None
+    sync_session = None
     try:
         auth = AuthManager()
         if not auth.is_authenticated():
@@ -70,6 +73,11 @@ async def run_sync(job: SyncJob, get_session_fn: Any) -> None:
             job.emit("done", "No ad accounts found.")
             job.status = "completed"
             return
+
+        # Start sync_log entry (use "all" for multi-account sync)
+        sync_session_gen = get_session_fn()
+        sync_session = next(sync_session_gen)
+        sync_run_id = start_sync_run(sync_session, "all", trigger="manual")
 
         all_campaigns: list[dict] = []
         all_creatives: list[dict] = []
@@ -123,6 +131,8 @@ async def run_sync(job: SyncJob, get_session_fn: Any) -> None:
                     upsert_campaign(session, acct["id"], camp)
                     upsert_campaign_daily_metrics(session, camp)
                     upsert_creatives(session, acct["id"], camp)
+                    for cr in camp.get("creatives", []):
+                        upsert_creative_daily_metrics(session, cr)
                 upsert_demographics(session, acct, snapshot.get("date_range", {}))
             session.commit()
         finally:
@@ -131,12 +141,28 @@ async def run_sync(job: SyncJob, get_session_fn: Any) -> None:
             except StopIteration:
                 pass
 
+        # Record success in sync_log
+        if sync_run_id and sync_session:
+            finish_sync_run(sync_session, sync_run_id, status="success", stats={
+                "campaigns_fetched": len(all_campaigns),
+                "creatives_fetched": len(all_creatives),
+            })
+
         job.emit("persist", "Database updated.")
         job.status = "completed"
         job.result = {"json_path": str(json_path), "account_count": len(accounts)}
         job.emit("done", "Sync complete!")
 
     except Exception as exc:
+        # Record failure in sync_log
+        if sync_run_id and sync_session:
+            try:
+                finish_sync_run(sync_session, sync_run_id, status="failed", stats={
+                    "errors": str(exc),
+                })
+            except Exception:
+                logger.warning("Failed to update sync_log for run %d", sync_run_id)
+
         job.status = "failed"
         job.error = str(exc)
         job.emit("error", str(exc))

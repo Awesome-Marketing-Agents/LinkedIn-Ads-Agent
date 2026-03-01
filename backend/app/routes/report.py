@@ -12,6 +12,7 @@ from app.crud.demographics import get_demographics
 from app.crud.metrics import (
     get_campaign_metrics_paginated,
     get_creative_metrics_paginated,
+    get_creatives,
     get_visual_data,
 )
 from app.utils.logging import get_logger
@@ -49,6 +50,11 @@ def demographics(
 @router.get("/visual")
 def visual_data(session: Session = Depends(get_db)):
     return get_visual_data(session)
+
+
+@router.get("/creatives")
+def creatives_list(session: Session = Depends(get_db)):
+    return {"rows": get_creatives(session)}
 
 
 @router.get("/campaigns")

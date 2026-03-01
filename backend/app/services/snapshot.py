@@ -228,7 +228,8 @@ def assemble_snapshot(
         acct_snapshot = {
             "id": acct.get("id"), "name": acct.get("name"), "status": acct.get("status"),
             "currency": acct.get("currency"), "type": acct.get("type"),
-            "test": acct.get("test", False), "campaigns": [], "audience_demographics": {},
+            "test": acct.get("test", False), "created_at": acct.get("createdAt"),
+            "campaigns": [], "audience_demographics": {},
         }
         acct_id = acct.get("id")
         acct_campaigns = campaigns_by_account.get(acct_id) if acct_id is not None else None
@@ -245,6 +246,7 @@ def assemble_snapshot(
             camp_snapshot = {
                 "id": camp.get("id"), "name": camp.get("name"),
                 "status": camp.get("status"), "type": camp.get("type"),
+                "created_at": camp.get("createdAt"),
                 "settings": {
                     "daily_budget": budget.get("amount") if budget else None,
                     "daily_budget_currency": budget.get("currencyCode") if budget else None,
@@ -274,11 +276,12 @@ def assemble_snapshot(
                     "serving_hold_reasons": cr.get("servingHoldReasons", []),
                     "content_reference": cr.get("content", {}).get("reference"),
                     "created_at": cr.get("createdAt"), "last_modified_at": cr.get("lastModifiedAt"),
-                    "metrics_summary": {},
+                    "metrics_summary": {}, "daily_metrics": [],
                 }
                 cr_rows = creat_metric_map.get(cr_id, [])
                 if cr_rows:
                     cr_snapshot["metrics_summary"] = _aggregate_metrics(cr_rows)
+                    cr_snapshot["daily_metrics"] = _daily_time_series(cr_rows)
                 camp_snapshot["creatives"].append(cr_snapshot)
 
             acct_snapshot["campaigns"].append(camp_snapshot)

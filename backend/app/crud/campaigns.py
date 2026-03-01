@@ -35,6 +35,7 @@ def upsert_campaign(
         "offsite_delivery_enabled": s.get("offsite_delivery_enabled", False),
         "audience_expansion_enabled": s.get("audience_expansion_enabled", False),
         "campaign_group": s.get("campaign_group"),
+        "created_at": camp.get("created_at"),
         "fetched_at": now,
     }
     stmt = insert(Campaign).values(**values)

@@ -22,6 +22,7 @@ def upsert_account(session: Session, acct: dict, now: str | None = None) -> None
         "currency": acct.get("currency"),
         "type": acct.get("type"),
         "is_test": acct.get("test", False),
+        "created_at": acct.get("created_at"),
         "fetched_at": now,
     }
     stmt = insert(AdAccount).values(**values)

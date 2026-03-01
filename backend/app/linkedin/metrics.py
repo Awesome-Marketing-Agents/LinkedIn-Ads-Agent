@@ -113,10 +113,14 @@ async def fetch_demographics(
 
     async def _fetch_pivot(pivot: str) -> tuple[str, list[dict]]:
         try:
-            rows = await _fetch_metrics_batch(
-                client, campaign_ids[:_BATCH_SIZE], start, end, pivot, "ALL",
-            )
-            return pivot, rows
+            all_rows: list[dict] = []
+            for i in range(0, len(campaign_ids), _BATCH_SIZE):
+                batch = campaign_ids[i:i + _BATCH_SIZE]
+                rows = await _fetch_metrics_batch(
+                    client, batch, start, end, pivot, "ALL",
+                )
+                all_rows.extend(rows)
+            return pivot, all_rows
         except Exception:
             logger.warning("Failed to fetch demographics for pivot %s", pivot)
             return pivot, []

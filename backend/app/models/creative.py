@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from sqlalchemy import BigInteger, Column
 from sqlmodel import Field, SQLModel
 
 
@@ -14,6 +15,7 @@ class Creative(SQLModel, table=True):
     intended_status: Optional[str] = None
     is_serving: Optional[bool] = None
     content_reference: Optional[str] = None
-    created_at: Optional[int] = None
-    last_modified_at: Optional[int] = None
+    serving_hold_reasons: Optional[str] = None
+    created_at: Optional[int] = Field(default=None, sa_column=Column(BigInteger))
+    last_modified_at: Optional[int] = Field(default=None, sa_column=Column(BigInteger))
     fetched_at: Optional[str] = None

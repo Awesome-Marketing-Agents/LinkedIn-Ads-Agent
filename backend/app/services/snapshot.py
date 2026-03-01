@@ -176,6 +176,7 @@ def assemble_snapshot(
     demo_data: dict,
     date_start: _dt.date,
     date_end: _dt.date,
+    content_names: dict[str, str] | None = None,
 ) -> dict:
     accounts = _validate_list(accounts, LinkedInAccount, "account")
     campaigns_list = _validate_list(campaigns_list, LinkedInCampaign, "campaign")
@@ -268,13 +269,16 @@ def assemble_snapshot(
                 camp_snapshot["metrics_summary"] = _aggregate_metrics(camp_rows)
                 camp_snapshot["daily_metrics"] = _daily_time_series(camp_rows)
 
+            content_names = content_names or {}
             for cr in creatives_by_campaign.get(camp_urn, []):
                 cr_id = cr.get("id", "")
+                cr_ref = cr.get("content", {}).get("reference", "")
                 cr_snapshot = {
                     "id": cr_id, "intended_status": cr.get("intendedStatus"),
                     "is_serving": cr.get("isServing", False),
                     "serving_hold_reasons": cr.get("servingHoldReasons", []),
-                    "content_reference": cr.get("content", {}).get("reference"),
+                    "content_reference": cr_ref,
+                    "content_name": content_names.get(cr_ref),
                     "created_at": cr.get("createdAt"), "last_modified_at": cr.get("lastModifiedAt"),
                     "metrics_summary": {}, "daily_metrics": [],
                 }

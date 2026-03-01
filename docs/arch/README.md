@@ -1,6 +1,6 @@
 # Architecture Documentation
 
-Beginner-friendly documentation for the **LinkedIn Ads Action Center** Python codebase. Each document describes a module or file in detail so you can understand, debug, and extend any part of the system.
+Documentation for the **LinkedIn Ads Action Center** backend. Each document covers a module or file in detail so you can understand, debug, and extend any part of the system.
 
 ---
 
@@ -15,48 +15,49 @@ Beginner-friendly documentation for the **LinkedIn Ads Action Center** Python co
 
 | # | Document | Module / File | Description |
 |---|----------|--------------|-------------|
-| 00 | [00-overview.md](00-overview.md) | Architecture Overview | System components, data flow, config, dependencies |
-| 01 | [01-bootstrap.md](01-bootstrap.md) | `bootstrap.py` | Path helper for `src/` imports |
-| 02 | [02-main.md](02-main.md) | `main.py` | Flask web dashboard entry point |
-| 03 | [03-cli.md](03-cli.md) | `cli.py` | CLI entry point (`auth`, `sync`, `status`) |
-| 04 | [04-auth-manager.md](04-auth-manager.md) | `auth/manager.py` | OAuth token management |
-| 05 | [05-auth-callback.md](05-auth-callback.md) | `auth/callback.py` | FastAPI OAuth callback server |
-| 06 | [06-ingestion-client.md](06-ingestion-client.md) | `ingestion/client.py` | LinkedIn API HTTP client |
-| 07 | [07-ingestion-fetchers.md](07-ingestion-fetchers.md) | `ingestion/fetchers.py` | Entity fetchers (accounts, campaigns, creatives) |
-| 08 | [08-ingestion-metrics.md](08-ingestion-metrics.md) | `ingestion/metrics.py` | Analytics & demographics fetchers |
-| 09 | [09-storage-database.md](09-storage-database.md) | `storage/database.py` | SQLite schema, SQLAlchemy engine & session |
-| 10 | [10-storage-repository.md](10-storage-repository.md) | `storage/repository.py` | Data access layer (upsert, freshness gate, query) |
-| 11 | [11-storage-snapshot.md](11-storage-snapshot.md) | `storage/snapshot.py` | Snapshot assembly with Pydantic validation & JSON export |
-| 12 | [12-core-config.md](12-core-config.md) | `core/config.py` | Pydantic BaseSettings configuration |
-| 13 | [13-core-constants.md](13-core-constants.md) | `core/constants.py` | API URLs & scopes |
-| 14 | [14-utils-logger.md](14-utils-logger.md) | `utils/logger.py` | Rich logging |
-| 15 | [15-utils-errors.md](15-utils-errors.md) | `utils/errors.py` | Custom exceptions |
-| 16 | [16-models-api.md](16-models-api.md) | `models/api_models.py` | Pydantic API response models |
-| 17 | [17-models-db.md](17-models-db.md) | `models/db_models.py` | SQLModel database table definitions |
-| 18 | [18-alembic-migrations.md](18-alembic-migrations.md) | `alembic/` | Database migrations with Alembic |
+| 00 | [00-overview.md](00-overview.md) | System Overview | Architecture, data flow, tech stack, module map |
+| 01 | [01-main.md](01-main.md) | `app/main.py` | FastAPI app, CORS, request context middleware, error handler |
+| 02 | [02-routes-overview.md](02-routes-overview.md) | `routes/__init__.py` | Router aggregator, endpoint table |
+| 03 | [03-routes-auth.md](03-routes-auth.md) | `routes/auth.py` | OAuth endpoints: status, url, health, callback |
+| 04 | [04-core-security.md](04-core-security.md) | `core/security.py` | AuthManager: OAuth flow, token refresh, health check |
+| 05 | [05-routes-sync.md](05-routes-sync.md) | `routes/sync.py` | Sync trigger, SSE stream, job polling |
+| 06 | [06-linkedin-client.md](06-linkedin-client.md) | `linkedin/client.py` | Async httpx client, auto-auth, pagination |
+| 07 | [07-linkedin-fetchers.md](07-linkedin-fetchers.md) | `linkedin/fetchers.py` | Entity fetchers: accounts, campaigns, creatives |
+| 08 | [08-linkedin-metrics.md](08-linkedin-metrics.md) | `linkedin/metrics.py` | Analytics and demographics fetchers, batching |
+| 09 | [09-core-db.md](09-core-db.md) | `core/db.py` | PostgreSQL engine, session factory |
+| 10 | [10-core-deps.md](10-core-deps.md) | `core/deps.py` | FastAPI dependencies: get_db(), get_auth() |
+| 11 | [11-services-sync.md](11-services-sync.md) | `services/sync.py` | SyncJob, 10-step pipeline, SSE events |
+| 12 | [12-services-snapshot.md](12-services-snapshot.md) | `services/snapshot.py` | Snapshot assembly, validation, aggregation |
+| 13 | [13-core-config.md](13-core-config.md) | `core/config.py` | Pydantic Settings, env vars, DB URI |
+| 14 | [14-linkedin-constants.md](14-linkedin-constants.md) | `linkedin/constants.py` | API version, base URLs, scopes |
+| 15 | [15-crud-accounts-campaigns.md](15-crud-accounts-campaigns.md) | `crud/accounts.py`, `crud/campaigns.py` | Account and campaign upserts + queries |
+| 16 | [16-crud-metrics-demographics.md](16-crud-metrics-demographics.md) | `crud/metrics.py`, `crud/demographics.py` | Metrics upserts, pagination, visual data |
+| 17 | [17-crud-sync-log.md](17-crud-sync-log.md) | `crud/sync_log.py` | Freshness gate, sync lifecycle, audit |
+| 18 | [18-models-tables.md](18-models-tables.md) | `models/*.py` | 7 SQLModel table definitions |
+| 19 | [19-models-api-validation.md](19-models-api-validation.md) | `models/linkedin_api.py` | Pydantic models for API responses |
+| 20 | [20-models-responses.md](20-models-responses.md) | `models/responses.py` | Shared API response schemas |
+| 21 | [21-routes-report.md](21-routes-report.md) | `routes/report.py` | 7 report GET endpoints |
+| 22 | [22-routes-status-health.md](22-routes-status-health.md) | `routes/status.py`, `routes/health.py` | Status dashboard + health check |
+| 23 | [23-utils-logging.md](23-utils-logging.md) | `utils/logging.py` | Rich console, file handlers, request_id |
+| 24 | [24-errors-exceptions.md](24-errors-exceptions.md) | `errors/exceptions.py` | 9-class exception hierarchy |
+| 25 | [25-testing.md](25-testing.md) | `tests/` | Test infra: SQLite StaticPool, fixtures |
+| 26 | [26-alembic-migrations.md](26-alembic-migrations.md) | `alembic/` | 3 PostgreSQL migrations |
 
 ---
 
 ## Common Commands
 
 ```bash
-# Install dependencies
-uv sync
+# Backend
+cd backend && uv sync                    # Install deps
+cd backend && pytest                     # Run tests
+cd backend && uvicorn app.main:app --reload --port 8000
 
-# Web dashboard
-uv run python main.py
+# Frontend
+cd frontend && npm install && npm run dev
 
-# CLI
-uv run python cli.py auth
-uv run python cli.py sync
-uv run python cli.py status
-
-# Tests
-uv run pytest tests/ -v
-
-# Database migrations
-uv run alembic upgrade head
-uv run alembic revision --autogenerate -m "description"
+# Docker
+docker compose up -d
 ```
 
 ---
@@ -64,23 +65,25 @@ uv run alembic revision --autogenerate -m "description"
 ## Data Flow Summary
 
 ```
-User (Web or CLI)
-    → AuthManager (tokens)
-    → LinkedInClient (HTTP)
-    → Fetchers + Metrics (API calls)
-    → assemble_snapshot (Pydantic validation + transform)
-    → persist_snapshot (SQLAlchemy upsert) + save_snapshot_json (disk)
+React Frontend (port 5173)
+    → FastAPI routes (/api/v1)
+    → services/sync.py (10-step pipeline)
+    → linkedin/ fetchers + metrics (async httpx)
+    → services/snapshot.py (Pydantic validation + aggregation)
+    → crud/ upserts (PostgreSQL INSERT ON CONFLICT)
+    → SSE progress events back to frontend
 ```
 
 ---
 
 ## Search Tips
 
-- **Authentication**: 04-auth-manager, 05-auth-callback
-- **API calls**: 06-ingestion-client, 07-ingestion-fetchers, 08-ingestion-metrics
-- **Database**: 09-storage-database, 10-storage-repository
-- **Snapshot / JSON**: 11-storage-snapshot
-- **Config / env**: 12-core-config, 13-core-constants
-- **Data models**: 16-models-api (API layer), 17-models-db (DB layer)
-- **Migrations**: 18-alembic-migrations
-- **Logging / errors**: 14-utils-logger, 15-utils-errors
+- **Authentication**: 03-routes-auth, 04-core-security
+- **Sync pipeline**: 05-routes-sync, 11-services-sync, 12-services-snapshot
+- **API calls**: 06-linkedin-client, 07-linkedin-fetchers, 08-linkedin-metrics
+- **Database**: 09-core-db, 15 through 17 (CRUD), 18 (models)
+- **Config / env**: 13-core-config, 14-linkedin-constants
+- **Data models**: 18 (DB), 19 (API validation), 20 (response schemas)
+- **Logging / errors**: 23-utils-logging, 24-errors-exceptions
+- **Testing**: 25-testing
+- **Migrations**: 26-alembic-migrations

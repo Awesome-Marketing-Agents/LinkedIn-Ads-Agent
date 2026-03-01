@@ -1,8 +1,13 @@
-# Module: Database (SQLite Schema & Connection)
+# Module: Database (SQLite Schema, SQLAlchemy Engine & Session)
 
 ## Overview
 
-`storage/database.py` defines the SQLite schema for the LinkedIn Ads Action Center and provides `get_connection()` so other modules can obtain a ready-to-use connection. All six tables are created automatically when the schema is applied.
+`storage/database.py` defines the SQLite schema for the LinkedIn Ads Action Center and provides two interfaces for database access:
+
+1. **Legacy**: `get_connection()` returns a raw `sqlite3.Connection` with WAL mode and schema applied.
+2. **Modern**: `get_engine()` returns a cached SQLAlchemy `Engine`, and `get_session()` yields a SQLModel `Session` for ORM-based access.
+
+All seven tables are created automatically when the schema is applied.
 
 ---
 
@@ -14,37 +19,48 @@
 
 ## Components & Explanation
 
-- **`_SCHEMA`** — SQL script defining six tables:
-  - `ad_accounts` — Ad account metadata (id, name, status, currency, type, is_test, fetched_at)
-  - `campaigns` — Campaign settings (id, account_id, name, status, type, budgets, bid_strategy, etc.)
-  - `creatives` — Creative metadata (id, campaign_id, account_id, intended_status, is_serving, etc.)
-  - `campaign_daily_metrics` — Daily time-series metrics per campaign
-  - `creative_daily_metrics` — Daily time-series metrics per creative
-  - `audience_demographics` — Aggregated demographic segments (account_id, pivot_type, segment, impressions, etc.)
+### Schema (`_SCHEMA`)
 
-- **`init_database(db_path=None)`** — Create schema and return database path. Used for initialization.
-- **`get_connection(db_path=None)`** — Return `sqlite3.Connection` with WAL mode and schema applied. Main entry point for all DB access.
+SQL script defining seven tables:
+
+| Table | Primary Key | Purpose |
+|-------|-------------|---------|
+| `ad_accounts` | `id` (INTEGER) | Ad account metadata |
+| `campaigns` | `id` (INTEGER) | Campaign settings, budgets, targeting flags |
+| `creatives` | `id` (TEXT) | Creative metadata, serving status |
+| `campaign_daily_metrics` | `(campaign_id, date)` | Daily time-series metrics per campaign |
+| `creative_daily_metrics` | `(creative_id, date)` | Daily time-series metrics per creative |
+| `audience_demographics` | `(account_id, pivot_type, segment, date_start)` | Aggregated demographic segments |
+| `sync_log` | `id` (AUTOINCREMENT) | Sync run tracking for freshness gate |
+
+### Legacy Interface
+
+- **`init_database(db_path=None)`** — Create schema and return database path.
+- **`get_connection(db_path=None)`** — Return `sqlite3.Connection` with WAL mode and schema applied. Used by freshness gate functions in `repository.py`.
+
+### SQLAlchemy Interface
+
+- **`get_engine(db_url=None)`** — Return a cached SQLAlchemy `Engine` singleton. Registers a `connect` event listener to set WAL mode on every new connection.
+- **`get_session(db_url=None)`** — Context manager that yields a `SQLModel.Session` bound to the engine. Used by `persist_snapshot()` for ORM-based upserts.
 
 ---
 
 ## Relationships
 
 - Used by `storage/repository.py` for all persistence and queries.
-- Reads `DATABASE_FILE` from `core.config` when `db_path` is not provided.
-- No other modules import this directly; they go through `repository`.
+- `get_engine()` reads `settings.database_url` from `core.config` when `db_url` is not provided.
+- `get_connection()` reads `DATABASE_FILE` from `core.config`.
+- SQLModel table definitions live in `models/db_models.py` (see [17-models-db.md](17-models-db.md)).
+- Alembic migrations also target this database (see [18-alembic-migrations.md](18-alembic-migrations.md)).
 
 ---
 
 ## Example Code Snippets
 
 ```python
-from linkedin_action_center.storage.database import get_connection, init_database
+# Legacy: raw sqlite3 connection
+from linkedin_action_center.storage.database import get_connection
 
-# Initialize (creates file and schema)
-path = init_database()
-print(f"Database at: {path}")
-
-# Get connection for queries
 conn = get_connection()
 cur = conn.cursor()
 cur.execute("SELECT COUNT(*) FROM campaigns")
@@ -53,9 +69,20 @@ conn.close()
 ```
 
 ```python
-# Use with custom path (e.g., tests)
-from pathlib import Path
-conn = get_connection(Path("/tmp/test.db"))
+# Modern: SQLAlchemy session (recommended for new code)
+from linkedin_action_center.storage.database import get_session
+
+with get_session() as session:
+    from linkedin_action_center.models.db_models import Campaign
+    campaigns = session.exec(select(Campaign)).all()
+    print(f"Found {len(campaigns)} campaigns")
+```
+
+```python
+# Custom path (e.g., tests)
+from linkedin_action_center.storage.database import get_engine
+
+engine = get_engine("sqlite:///tmp/test.db")
 ```
 
 ---
@@ -63,9 +90,11 @@ conn = get_connection(Path("/tmp/test.db"))
 ## Edge Cases & Tips
 
 - **Schema application**: `executescript(_SCHEMA)` runs on every `get_connection()`; `CREATE TABLE IF NOT EXISTS` is idempotent.
-- **WAL mode**: `PRAGMA journal_mode=WAL` improves concurrent read performance.
+- **WAL mode**: Set via `PRAGMA journal_mode=WAL` on both the legacy and SQLAlchemy interfaces.
+- **Engine caching**: `get_engine()` caches the engine globally. Pass a `db_url` to create a new engine (used in tests).
 - **Path**: Default is `data/linkedin_ads.db`; `data/` is created by `core/config`.
 - **Foreign keys**: Schema defines `FOREIGN KEY` but SQLite does not enforce them by default; enable with `PRAGMA foreign_keys=ON` if needed.
+- **Composite primary keys**: Metrics and demographics tables use composite keys to prevent duplicates.
 
 ---
 
@@ -73,48 +102,26 @@ conn = get_connection(Path("/tmp/test.db"))
 
 ```
 Repository / Tests
-    │
-    └── get_connection(db_path)
-            ├── sqlite3.connect(path)
-            ├── PRAGMA journal_mode=WAL
-            ├── conn.executescript(_SCHEMA)
-            └── return conn
+    |
+    ├── get_connection(db_path)          [Legacy path]
+    │       ├── sqlite3.connect(path)
+    │       ├── PRAGMA journal_mode=WAL
+    │       ├── conn.executescript(_SCHEMA)
+    │       └── return conn
+    |
+    └── get_session(db_url)              [Modern path]
+            ├── get_engine(db_url)
+            │       ├── create_engine(url)
+            │       └── @event: PRAGMA journal_mode=WAL
+            └── Session(engine) -> yield session
 ```
 
 ---
 
 ## Advanced Notes
 
-- Primary keys: `ad_accounts.id`, `campaigns.id`, `creatives.id` (TEXT for creatives); composite keys for metrics tables.
-- `fetched_at` columns store ISO timestamps for audit.
+- Primary keys: `ad_accounts.id`, `campaigns.id`, `creatives.id` (TEXT for creatives); composite keys for metrics and demographics tables.
+- `fetched_at` columns store ISO timestamps for audit trail.
 - Derived metrics (ctr, cpc) are stored in metrics tables, not computed on read.
-
----
-
-## Node.js Equivalent
-
-**Files**: `node-app/src/storage/database.ts` + `node-app/src/storage/schema.ts`
-
-The Node.js port splits `storage/database.py` into two files: one for connection management and raw schema init, and one for type-safe table definitions via Drizzle ORM.
-
-### Key Mappings
-
-| Python | Node.js |
-|--------|---------|
-| `storage/database.py` | `node-app/src/storage/database.ts` (connection + raw SQL schema) |
-| -- | `node-app/src/storage/schema.ts` (Drizzle ORM table definitions) |
-| `sqlite3` (stdlib) | `better-sqlite3` (synchronous C binding) |
-| `_SCHEMA` SQL string | Raw `CREATE TABLE IF NOT EXISTS` statements in `database.ts` |
-
-### Preserved Patterns
-
-- **Same WAL mode** (`PRAGMA journal_mode=WAL`) for concurrent read performance.
-- **Same 6 tables** with identical columns: `ad_accounts`, `campaigns`, `creatives`, `campaign_daily_metrics`, `creative_daily_metrics`, `audience_demographics`.
-- **Same idempotent schema application** using `CREATE TABLE IF NOT EXISTS` on every connection.
-- **`get_connection()` equivalent** returns a `better-sqlite3` Database instance.
-
-### Key Additions
-
-- **`schema.ts`** defines all six tables using Drizzle ORM, providing **TypeScript types for all table columns**. This gives compile-time type safety when reading from or writing to the database.
-- **`better-sqlite3`** is a synchronous C binding, which matches the behavior of Python's built-in `sqlite3` module -- no async overhead for local database operations.
-- The raw SQL schema in `database.ts` is used for `CREATE TABLE IF NOT EXISTS` initialization, while the Drizzle schema in `schema.ts` is used for type-safe query building in the repository layer.
+- `sync_log` table tracks every sync run: start time, finish time, status, counts, and errors. Used by the freshness gate (`should_sync()`) to avoid redundant API calls.
+- The dual interface (legacy + SQLAlchemy) exists for backward compatibility. New code should use `get_session()`.

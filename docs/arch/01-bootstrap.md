@@ -2,7 +2,7 @@
 
 ## Overview
 
-`bootstrap.py` is a small utility that ensures the `src/` directory is on Python’s import path. This lets `main.py` and `cli.py` import `linkedin_action_center` without installing the package or manually adjusting `sys.path`.
+`bootstrap.py` is a small utility that ensures the `src/` directory is on Python's import path. This lets `main.py` and `cli.py` import `linkedin_action_center` without installing the package or manually adjusting `sys.path`.
 
 ---
 
@@ -54,7 +54,7 @@ if parent_dir not in sys.path:
 
 - **Import order**: `bootstrap` must be imported before any `linkedin_action_center` imports.
 - **`noqa: F401`**: Used because `bootstrap` is imported only for its side effect; linters may flag it as unused.
-- **Alternative**: Running `uv run python main.py` from the project root uses `pyproject.toml` and `uv`’s environment, which also makes the package importable; `bootstrap` is a fallback for direct execution.
+- **Alternative**: Running `uv run python main.py` from the project root uses `pyproject.toml` and `uv`'s environment, which also makes the package importable; `bootstrap` is a fallback for direct execution.
 
 ---
 
@@ -62,17 +62,11 @@ if parent_dir not in sys.path:
 
 ```
 main.py / cli.py
-    │
+    |
     └── import bootstrap
             └── sys.path.insert(0, project_root/src)
                     └── linkedin_action_center importable
 ```
-
----
-
-## Node.js Equivalent
-
-The Node.js migration (`node-app/`) does not need a bootstrap module. TypeScript uses `tsconfig.json` path resolution and ESM imports natively. No `sys.path` manipulation is needed.
 
 ---
 

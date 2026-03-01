@@ -27,7 +27,7 @@
 
 - Uses `AuthManager` and `OAUTH_STATE` from `core.config`.
 - Runs on port 5000; **conflicts with Flask** if both run at once.
-- Intended for CLI auth; web dashboard uses Flask’s `/callback` in `main.py`.
+- Intended for CLI auth; web dashboard uses Flask's `/callback` in `main.py`.
 
 ---
 
@@ -64,24 +64,15 @@ start_auth_flow()  # Opens browser, waits, exchanges code
 
 ```
 start_auth_flow()
-    │
-    ├── If authenticated → check_token_health() → return
-    │
+    |
+    ├── If authenticated -> check_token_health() -> return
+    |
     └── Else:
             ├── Thread: uvicorn.run(app, port=5000)
             ├── webbrowser.open(auth_url)
             ├── while not auth_code_received: sleep(1)
             └── auth_manager.exchange_code_for_token(auth_code_received)
 ```
-
----
-
-## Node.js Equivalent
-
-- `auth/callback.py` (FastAPI on port 5000) is replaced by `node-app/src/auth/callback.ts` (a Fastify route plugin).
-- No separate server is needed; the callback is a Fastify route plugin registered on the main server.
-- This eliminates the port conflict between Flask and FastAPI that exists in the Python version.
-- The same state validation and CSRF protection logic is preserved.
 
 ---
 

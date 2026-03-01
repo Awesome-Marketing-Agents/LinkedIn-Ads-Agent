@@ -20,20 +20,28 @@
   - **Outputs**: Configured `logging.Logger`.
   - **Note**: Prevents duplicate handlers if logger already configured.
 
-- **`logger`** — Default singleton logger instance.
+- **`logger`** — Default singleton logger instance. Import this for logging.
 - **`set_log_level(level)`** — Change log level for all handlers (int or string like `"DEBUG"`).
 - **`log_api_call(method, endpoint, status_code, duration)`** — Log API call with status and duration.
 - **`log_sync_progress(step, count, total)`** — Log sync progress (e.g. `SYNC: campaigns [5/10]`).
 - **`log_auth_event(event, details)`** — Log auth events (e.g. `AUTH: Token valid - Authenticated as: John Doe`).
 - **`log_error(error, context)`** — Log error with traceback and optional context.
 
+### Setup at Import
+
+When the module is imported, it automatically:
+1. Installs Rich traceback handler globally (`show_locals=True`).
+2. Creates `logs/` directory under project root.
+3. Creates the default `logger` singleton with both console and file handlers.
+
 ---
 
 ## Relationships
 
-- Used by `auth/manager`, `ingestion/client`, `storage/repository`.
+- Used by `auth/manager`, `ingestion/client`, `storage/repository`, `storage/snapshot`.
 - Creates `logs/` directory and `logs/linkedin_action_center.log`.
-- Uses `rich` for console output and tracebacks; `install_rich_traceback()` runs at import.
+- Uses `rich` for console output and tracebacks.
+- Reads `BASE_DIR` from `core.config` for log directory path.
 
 ---
 
@@ -63,9 +71,9 @@ set_log_level("DEBUG")
 ## Edge Cases & Tips
 
 - **Duplicate handlers**: `get_logger` checks `logger.handlers` and returns early if already configured.
-- **File vs console**: File gets DEBUG; console uses the configured level (default INFO).
-- **Rich traceback**: `install_rich_traceback(show_locals=True)` affects all uncaught exceptions.
-- **LOGS_DIR**: `BASE_DIR / "logs"`; created at import.
+- **File vs console**: File handler gets DEBUG level (logs everything); console handler uses the configured level (default INFO).
+- **Rich traceback**: `install_rich_traceback(show_locals=True)` affects all uncaught exceptions globally.
+- **LOGS_DIR**: `BASE_DIR / "logs"`; created at import time.
 
 ---
 
@@ -73,49 +81,20 @@ set_log_level("DEBUG")
 
 ```
 Module import
-    │
+    |
     └── from linkedin_action_center.utils.logger import logger
             ├── install_rich_traceback()
             ├── LOGS_DIR.mkdir(exist_ok=True)
-            └── logger = get_logger()  # RichHandler + FileHandler
+            └── logger = get_logger()
+                    ├── RichHandler (console, colored, shows time/level/path)
+                    └── FileHandler (logs/linkedin_action_center.log, plain text)
 ```
 
 ---
 
 ## Advanced Notes
 
-- Console formatter: `%(message)s` only; Rich adds level, time, path.
+- Console formatter: `%(message)s` only; Rich adds level, time, path automatically.
 - File formatter: `%(asctime)s | %(name)s | %(levelname)s | %(message)s`.
 - `force_terminal=True` on Rich Console ensures colors even when stdout is redirected.
-
----
-
-## Node.js Equivalent
-
-- **Python:** `utils/logger.py` (Rich) --> **Node.js:** `node-app/src/logger.ts` (Pino)
-- Pino is the default logger for Fastify, making it the natural choice for the Node.js migration. It provides structured JSON logging out of the box.
-- Uses Pino multistream to output to two destinations simultaneously:
-  - Pretty-printed console output (via `pino-pretty`) for development.
-  - JSON file output to `logs/app.log` for production and log aggregation.
-- The same convenience function pattern is preserved, but implemented as Pino child loggers rather than standalone functions. Child loggers automatically inherit the parent configuration and add contextual fields.
-
-```typescript
-import pino from "pino";
-import fs from "node:fs";
-import path from "node:path";
-
-const logsDir = path.join(__dirname, "../..", "logs");
-fs.mkdirSync(logsDir, { recursive: true });
-
-const streams = [
-  { stream: require("pino-pretty")({ colorize: true }) },
-  { stream: fs.createWriteStream(path.join(logsDir, "app.log"), { flags: "a" }) },
-];
-
-export const logger = pino({ level: "info" }, pino.multistream(streams));
-
-// Child loggers for domain-specific logging
-export const apiLogger = logger.child({ module: "api" });
-export const authLogger = logger.child({ module: "auth" });
-export const syncLogger = logger.child({ module: "sync" });
-```
+- Log file uses `utf-8` encoding.

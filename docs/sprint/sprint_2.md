@@ -1,205 +1,99 @@
 # Sprint 2: Module Review & Refactoring
 
-**Start Date**: February 19, 2026  
-**Status**: In Progress
+**Start Date**: February 19, 2026
+**End Date**: February 28, 2026
+**Status**: Completed
 
-## 📋 Objectives
+---
+
+## Objectives
 
 1. Review and refactor all core modules for clarity and separation of concerns
-2. Add missing foundational modules (logging, error handling, analytics)
+2. Add missing foundational modules (logging, error handling)
 3. Integrate `rich` library for enhanced logging and error tracebacks
-4. Write minimal unit tests for each module
-5. Document module APIs and data flows
-6. Prepare interfaces for LLM/brain integration
+4. Prepare interfaces for Sprint 3 optimizations
 
 ---
 
-## 🔍 Module Review Findings
+## Module Review Findings
 
-### ✅ Existing Modules
+### Existing Modules
 
 #### 1. **auth/** (Authentication & OAuth)
-- **Files**: `manager.py`, `callback.py`
 - **Status**: Well-structured
-- **Findings**:
-  - `AuthManager` handles token persistence, refresh, validation
-  - `callback.py` uses FastAPI for OAuth callback server
-  - Clear separation of concerns
-  - **Refactor Needed**: 
-    - Add proper error handling with rich tracebacks
-    - Add logging for auth flow events
-    - Extract token validation logic into separate helper
-    - Add type hints to all methods
+- **Findings**: `AuthManager` handles token persistence, refresh, validation. `callback.py` uses FastAPI for OAuth callback server. Clear separation of concerns.
 
 #### 2. **core/** (Configuration & Constants)
-- **Files**: `config.py`, `constants.py`
 - **Status**: Functional, needs enhancement
-- **Findings**:
-  - `config.py` loads env vars via `python-dotenv`
-  - `constants.py` has API endpoints and scopes
-  - **Refactor Needed**:
-    - Validate config on load (fail fast if missing keys)
-    - Add config validation helper
-    - Consider using Pydantic for typed config
+- **Findings**: `config.py` loads env vars via `python-dotenv`. Needed config validation (deferred to Sprint 3 with Pydantic BaseSettings).
 
 #### 3. **ingestion/** (LinkedIn API Client & Data Fetchers)
-- **Files**: `client.py`, `fetchers.py`, `metrics.py`
 - **Status**: Well-organized
-- **Findings**:
-  - `LinkedInClient` wraps HTTP calls with auth headers
-  - `fetchers.py` has ad account, campaign, creative fetch logic
-  - `metrics.py` fetches campaign/creative metrics and demographics
-  - **Refactor Needed**:
-    - Add retry logic for API calls
-    - Better error messages with rich formatting
-    - Add rate limit handling
-    - Extract pagination logic to reusable helper
+- **Findings**: `LinkedInClient` wraps HTTP calls with auth headers. Fetchers and metrics modules are clean. Error handling improved.
 
 #### 4. **storage/** (SQLite Database & Snapshots)
-- **Files**: `database.py`, `repository.py`, `snapshot.py`
 - **Status**: Functional, uses raw SQL
-- **Findings**:
-  - `database.py` defines schema with 6 tables
-  - `repository.py` has upsert/query logic with raw SQL
-  - `snapshot.py` assembles structured JSON snapshots for analysis
-  - **Refactor Needed** (HIGH PRIORITY):
-    - Replace raw SQL with SQLAlchemy ORM
-    - Add proper connection pooling
-    - Add transaction management
-    - Create model classes for type safety
-    - Add data validation on insert
-
-#### 5. **utils/** (Utilities)
-- **Status**: Empty (just `__init__.py`)
-- **Action**: Populate with shared helpers
-
-#### 6. **analysis/** (Analytics & Insights)
-- **Status**: Empty placeholder
-- **Action**: Build analytics modules for LLM-ready insights
-
-#### 7. **models/** (Data Models)
-- **Status**: Empty placeholder
-- **Action**: Add Pydantic or dataclass models for all entities
-
-#### 8. **agent/** (LLM Brain - Future)
-- **Status**: Placeholder with `utils/` subfolder
-- **Action**: Reserved for future LLM integration
-
-#### 9. **api/** (REST API Routes)
-- **Status**: Has `routes/` subfolder
-- **Action**: Consider extracting Flask routes from `main.py`
+- **Findings**: HIGH PRIORITY refactor identified — replace raw SQL with SQLAlchemy ORM (deferred to Sprint 3).
 
 ---
 
-## 🛠️ Refactoring Action Plan
+## Completed Work
 
-### Phase 1: Foundational Infrastructure (Current)
+### Phase 1: Foundational Infrastructure
 
-#### Task 1.1: Add `rich`-based Logging Module ✅
-**File**: `src/linkedin_action_center/utils/logger.py`
+#### Task 1.1: Rich-based Logging Module
+- **File**: `src/linkedin_action_center/utils/logger.py`
+- **Status**: Completed
+- Created centralized logger with Rich console handler and file handler.
+- Added convenience functions: `log_api_call`, `log_sync_progress`, `log_auth_event`, `log_error`.
+- Rich tracebacks installed globally with `show_locals=True`.
 
-Create a centralized logger using `rich`:
-- Console logging with color/emoji
-- File logging with rotation
-- Structured log levels (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-- Context-aware logging (add module name, timestamp)
-- Rich tracebacks for exceptions
+#### Task 1.2: Error Handling Module
+- **File**: `src/linkedin_action_center/utils/errors.py`
+- **Status**: Completed
+- Defined 8 custom exception classes with Rich-formatted `display()`.
+- Hierarchy: `LinkedInActionCenterError` -> `AuthenticationError`, `LinkedInAPIError`, `StorageError`, etc.
+- Added `handle_error()` utility function.
 
-#### Task 1.2: Add Error Handling Module
-**File**: `src/linkedin_action_center/utils/errors.py`
+#### Task 1.3: UI Separation
+- **Files**: `main.py`, `ui.py`
+- **Status**: Completed (PR #1)
+- Separated all UI rendering logic into `ui.py` (929 lines).
+- `main.py` became a lean Flask entry point.
 
-Define custom exception classes:
-- `LinkedInAPIError` (base for all API errors)
-- `AuthenticationError`
-- `RateLimitError`
-- `ValidationError`
-- `ConfigurationError`
+### Phase 2: Data Enhancements
 
-Add error formatting with rich.
+#### Task 2.1: Surface Missing Report Data
+- **Files**: `ingestion/metrics.py`, `storage/snapshot.py`, `ui.py`
+- **Status**: Completed (PR #2)
+- Added 5 new report views (Campaign Settings, Audience Demographics).
+- Added Opens, Sends, Cost per Lead columns.
+- Resolved demographic URNs to human-readable names via LinkedIn API with local fallback.
 
-#### Task 1.3: Add Config Validation
-**File**: `src/linkedin_action_center/core/config.py` (update)
-
-- Validate all required env vars on load
-- Fail fast with clear error message if missing
-- Optional: Use Pydantic `BaseSettings` for typed config
-
----
-
-### Phase 2: Module Refactoring (Next)
-
-#### Task 2.1: Refactor `auth/`
-- Add logging to all methods
-- Replace print statements with logger calls
-- Add rich tracebacks for OAuth errors
-- Extract token validation into `utils/token_validator.py`
-
-#### Task 2.2: Refactor `ingestion/`
-- Add retry logic with exponential backoff
-- Add rate limit detection and handling
-- Extract pagination helper to `utils/pagination.py`
-- Replace print statements with logger calls
-
-#### Task 2.3: Refactor `storage/` (HIGH PRIORITY)
-- **Replace raw SQL with SQLAlchemy ORM**
-- Create model classes in `models/`
-- Add proper connection pooling
-- Add transaction context managers
-- Add data validation on insert
+#### Task 2.2: Visual Dashboard
+- **File**: `ui.py`
+- **Status**: Completed (PR #3)
+- Added `/report/visual` route with 9 Chart.js visualizations.
+- KPI scorecards, performance trends, spend distribution, engagement radar, etc.
 
 ---
 
-### Phase 3: Testing & Documentation (Later)
+## Deferred to Sprint 3
 
-#### Task 3.1: Write Unit Tests
-- Use `pytest`
-- Create `tests/` folder at project root
-- Add tests for each module (aim for >70% coverage)
-- Mock external dependencies (LinkedIn API, DB)
+The following HIGH PRIORITY items were planned for Sprint 2 but deferred to Sprint 3 due to scope:
 
-#### Task 3.2: Update Documentation
-- Update `docs/research/arch.md` with module APIs
-- Add docstrings to all classes/functions
-- Create API reference docs
+1. Replace raw SQL with SQLAlchemy ORM
+2. Pydantic BaseSettings for config validation
+3. Pydantic models for API response validation
+4. Unit test coverage (>70% target)
+5. Alembic database migrations
 
 ---
 
-## 📦 New Modules to Add
+## PRs Merged
 
-### 1. `utils/logger.py` (Logging with rich)
-### 2. `utils/errors.py` (Custom exceptions)
-### 3. `utils/pagination.py` (Pagination helper)
-### 4. `utils/retry.py` (Retry logic with backoff)
-### 5. `utils/validators.py` (Data validation helpers)
-### 6. `models/entities.py` (Pydantic/dataclass models)
-### 7. `analysis/metrics.py` (Analytics & insights)
-
----
-
-## 🧪 Testing Strategy
-
-- **Unit tests**: Test each module in isolation
-- **Integration tests**: Test module interactions (e.g., client → fetcher → storage)
-- **End-to-end tests**: Test full workflows (auth → sync → analyze)
-
----
-
-## 📝 Next Steps
-
-1. ✅ Create `utils/logger.py` with rich integration
-2. ⏳ Integrate logger into existing modules
-3. ⏳ Add error handling module
-4. ⏳ Refactor storage layer to use SQLAlchemy
-5. ⏳ Write unit tests
-6. ⏳ Update documentation
-
----
-
-## 🎯 Success Criteria
-
-- All modules use centralized logging (no more print statements)
-- All exceptions use rich tracebacks
-- Storage layer uses ORM (no raw SQL)
-- All modules have type hints
-- Core modules have >70% test coverage
-- Documentation is up-to-date and accurate
+| PR | Title | Changes |
+|----|-------|---------|
+| #1 | Redesign dashboard UI and separate UI layer into ui.py | +929 / -606 |
+| #2 | Surface missing snapshot data in report UI | +418 / -25 |
+| #3 | Add visual dashboard with Chart.js charts | +781 / -3 |

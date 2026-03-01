@@ -59,27 +59,38 @@ async function runSync(job: SyncJob): Promise<void> {
       return;
     }
 
-    const account = accounts[0];
-    const accountId = account.id as number;
+    emit("1/6", `Found ${accounts.length} account(s). Syncing all...`);
 
-    emit("2/6", "Fetching campaigns...");
-    const campaigns = await fetchCampaigns(client, accountId);
-    for (const c of campaigns) c._account_id = accountId;
-    emit("2/6", `Found ${campaigns.length} campaign(s).`);
+    let allCampaigns: Record<string, unknown>[] = [];
+    let allCreatives: Record<string, unknown>[] = [];
+    let allCampaignIds: number[] = [];
 
-    const campaignIds = campaigns.map((c) => c.id as number);
+    for (const account of accounts) {
+      const accountId = account.id as number;
 
-    emit("3/6", "Fetching creatives...");
-    const creatives = await fetchCreatives(client, accountId, campaignIds);
-    emit("3/6", `Found ${creatives.length} creative(s).`);
+      emit("2/6", `Fetching campaigns for ${account.name ?? accountId}...`);
+      const campaigns = await fetchCampaigns(client, accountId);
+      for (const c of campaigns) c._account_id = accountId;
+      allCampaigns.push(...campaigns);
+
+      const campaignIds = campaigns.map((c) => c.id as number);
+      allCampaignIds.push(...campaignIds);
+
+      emit("3/6", `Fetching creatives for ${account.name ?? accountId}...`);
+      const creatives = await fetchCreatives(client, accountId, campaignIds);
+      allCreatives.push(...creatives);
+    }
+
+    emit("2/6", `Found ${allCampaigns.length} campaign(s) across ${accounts.length} account(s).`);
+    emit("3/6", `Found ${allCreatives.length} creative(s).`);
 
     // KEY PERFORMANCE WIN: Fetch metrics + demographics in parallel
     emit("4-6/6", "Fetching metrics and demographics in parallel...");
 
     const [campMetrics, creatMetrics, demographics] = await Promise.all([
-      fetchCampaignMetrics(client, campaignIds, dateStart, today),
-      fetchCreativeMetrics(client, campaignIds, dateStart, today),
-      fetchDemographics(client, campaignIds, dateStart, today),
+      fetchCampaignMetrics(client, allCampaignIds, dateStart, today),
+      fetchCreativeMetrics(client, allCampaignIds, dateStart, today),
+      fetchDemographics(client, allCampaignIds, dateStart, today),
     ]);
 
     emit(
@@ -89,9 +100,9 @@ async function runSync(job: SyncJob): Promise<void> {
 
     emit("assemble", "Assembling snapshot...");
     const snapshot = assembleSnapshot(
-      [account],
-      campaigns,
-      creatives,
+      accounts,
+      allCampaigns,
+      allCreatives,
       campMetrics,
       creatMetrics,
       demographics,

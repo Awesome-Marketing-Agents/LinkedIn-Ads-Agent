@@ -6,8 +6,8 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      "/api": "http://localhost:5002",
-      "/callback": "http://localhost:5002",
+      "/api": "http://localhost:5001",
+      "/callback": "http://localhost:5001",
     },
   },
   build: {

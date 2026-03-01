@@ -2,7 +2,7 @@
 
 ## Overview
 
-The **LinkedIn Ads Action Center** is a modular Python application that lets you authenticate with the LinkedIn API, ingest ad campaign data, and view performance metrics through either a web dashboard or a command-line interface. Data flows from the LinkedIn REST API into a local SQLite database and JSON snapshots, enabling offline analysis and historical tracking.
+The **LinkedIn Ads Action Center** is a modular Python application that lets you authenticate with the LinkedIn API, ingest ad campaign data, and view performance metrics through either a web dashboard or a command-line interface. Data flows from the LinkedIn REST API through Pydantic validation into a local SQLite database (via SQLAlchemy upserts) and JSON snapshots, enabling offline analysis and historical tracking.
 
 This document provides a high-level view of the system. For detailed per-module documentation, see the other files in this folder.
 
@@ -19,54 +19,70 @@ This document provides a high-level view of the system. For detailed per-module 
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | **Auth** | `auth/` | OAuth 2.0 flow, token storage, refresh |
-| **Ingestion** | `ingestion/` | HTTP client, API fetchers, metrics |
-| **Storage** | `storage/` | SQLite schema, repository, snapshot assembly |
-| **Core** | `core/` | Config, constants |
-| **Utils** | `utils/` | Logging, custom exceptions |
-| **Web Dashboard** | `main.py` | Flask app with routes for auth, sync, status |
+| **Ingestion** | `ingestion/` | HTTP client, API fetchers, metrics & demographics |
+| **Storage** | `storage/` | SQLite schema, SQLAlchemy engine, repository (upserts), snapshot assembly |
+| **Models** | `models/` | Pydantic API models (validation), SQLModel DB models (ORM) |
+| **Core** | `core/` | Pydantic BaseSettings config, API constants |
+| **Utils** | `utils/` | Rich logging, custom exceptions |
+| **Migrations** | `alembic/` | Database schema versioning with Alembic |
+| **Web Dashboard** | `main.py` + `ui.py` | Flask app with routes for auth, sync, status, visual reports |
 | **CLI** | `cli.py` | Scriptable commands (`auth`, `sync`, `status`) |
 | **OAuth Callback** | `auth/callback.py` | FastAPI server for CLI auth flow |
 
 ---
 
-## Data Flow: LinkedIn API → Local Storage
+## Data Flow: LinkedIn API -> Local Storage
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ 1. User initiates action (Web or CLI)                                        │
+│ 1. User initiates action (Web or CLI)                                      │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                      ↓
+                                      |
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ 2. AuthManager.get_access_token()                                           │
-│    - Loads tokens from tokens.json                                           │
-│    - Auto-refreshes if expired (5 min buffer)                                │
+│ 2. Freshness Gate (repository.should_sync)                                 │
+│    - Checks sync_log for last successful sync                              │
+│    - Skips if data is fresh (default: 4-hour TTL)                          │
+│    - Logs new sync_log entry via start_sync_run()                          │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                      ↓
+                                      |
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ 3. ingestion/fetchers + metrics                                             │
-│    a) fetch_ad_accounts(client)                                              │
-│    b) For each account: fetch_campaigns(client, account_id)                   │
-│    c) For each campaign: fetch_creatives(client, account_id, campaign_ids)   │
-│    d) fetch_campaign_metrics(client, campaign_ids, date_start, date_end)     │
-│    e) fetch_creative_metrics(client, campaign_ids, dates)                     │
-│    f) fetch_demographics(client, campaign_ids, dates)                         │
+│ 3. AuthManager.get_access_token()                                          │
+│    - Loads tokens from tokens.json                                         │
+│    - Auto-refreshes if expired (5 min buffer)                              │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                      ↓
+                                      |
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ 4. storage/snapshot.assemble_snapshot()                                      │
-│    - Combines raw API data into a structured dict                            │
-│    - Aggregates metrics, computes CTR, CPC, etc.                             │
-│    - Indexes demographics by pivot type                                      │
+│ 4. ingestion/fetchers + metrics                                            │
+│    a) fetch_ad_accounts(client)                                            │
+│    b) For each account: fetch_campaigns(client, account_id)                │
+│    c) For each account: fetch_creatives(client, account_id, campaign_ids)  │
+│    d) fetch_campaign_metrics(client, campaign_ids, date_start, date_end)   │
+│    e) fetch_creative_metrics(client, campaign_ids, dates)                  │
+│    f) fetch_demographics(client, campaign_ids, dates)                      │
+│    g) resolve_demographic_urns(client, demo_data)                          │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                      ↓
+                                      |
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ 5. Persistence                                                               │
-│    a) save_snapshot_json(snapshot) → data/snapshots/snapshot_YYYYMMDD.json   │
-│    b) persist_snapshot(snapshot) → data/linkedin_ads.db (SQLite)            │
+│ 5. storage/snapshot.assemble_snapshot()                                     │
+│    - Validates ALL raw data through Pydantic models (api_models.py)        │
+│    - Invalid records are logged and skipped                                │
+│    - Combines raw API data into a structured dict                          │
+│    - Aggregates metrics, computes CTR, CPC, CPM, CPL                      │
+│    - Resolves demographic URNs to human-readable names                     │
+│    - Indexes demographics by pivot type (top 10 per pivot)                 │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                      ↓
+                                      |
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ 6. User sees results (status page, sync log, CLI output)                    │
+│ 6. Persistence                                                             │
+│    a) save_snapshot_json(snapshot) -> data/snapshots/snapshot_YYYYMMDD.json │
+│    b) persist_snapshot(snapshot) -> data/linkedin_ads.db                    │
+│       Uses SQLAlchemy Core insert().on_conflict_do_update()                │
+│       True upserts — no data loss, no duplicates                           │
+│    c) finish_sync_run(run_id) -> updates sync_log with stats               │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      |
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 7. User sees results (status page, visual report, sync log, CLI output)    │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -74,14 +90,17 @@ This document provides a high-level view of the system. For detailed per-module 
 
 ## Environment & Config
 
+Configuration is managed through a Pydantic `BaseSettings` class in `core/config.py`. Environment variables are loaded from `.env` via `python-dotenv` and validated at startup.
+
 | Variable | Purpose | Required |
 |----------|---------|----------|
 | `LINKEDIN_CLIENT_ID` | LinkedIn app client ID | Yes |
 | `LINKEDIN_CLIENT_SECRET` | LinkedIn app secret | Yes |
-| `LINKEDIN_REDIRECT_URI` | OAuth callback URL (e.g. `http://localhost:5000/callback`) | Yes |
+| `LINKEDIN_REDIRECT_URI` | OAuth callback URL (e.g. `http://localhost:5000/callback`) | No (has default) |
 | `OAUTH_STATE` | CSRF protection string | No (default: `supersecretstate`) |
+| `FRESHNESS_TTL_MINUTES` | Minutes before a sync is re-run | No (default: `240`) |
 
-Config is loaded from `.env` via `python-dotenv` in `core/config.py`. Paths are derived from `BASE_DIR`:
+Paths are derived from `BASE_DIR` (project root):
 
 - `tokens.json` — OAuth tokens
 - `data/linkedin_ads.db` — SQLite database
@@ -98,9 +117,13 @@ Config is loaded from `.env` via `python-dotenv` in `core/config.py`. Paths are 
 | Web dashboard | Flask |
 | OAuth callback (CLI) | FastAPI + Uvicorn |
 | HTTP client | requests |
-| Database | SQLite |
-| Config | python-dotenv |
-| Logging | rich |
+| Database | SQLite (WAL mode) |
+| ORM | SQLAlchemy + SQLModel |
+| Migrations | Alembic |
+| Config validation | Pydantic BaseSettings |
+| API data validation | Pydantic models |
+| Logging | Rich |
+| Testing | pytest |
 | Python | 3.13+ |
 
 ---
@@ -111,15 +134,16 @@ Config is loaded from `.env` via `python-dotenv` in `core/config.py`. Paths are 
 
 1. Start: `uv run python main.py`
 2. Open: http://127.0.0.1:5000
-3. Authenticate → `/auth` → redirect to LinkedIn → callback at `/callback`
-4. Sync → `/sync` → fetches all data, persists, shows log
-5. Status → `/status` → token health + DB row counts + active campaign audit
+3. Authenticate -> `/auth` -> redirect to LinkedIn -> callback at `/callback`
+4. Sync -> `/sync` -> freshness check -> fetches all data -> persists -> shows log
+5. Status -> `/status` -> token health + DB row counts + active campaign audit
+6. Visual Report -> `/report/visual` -> Chart.js dashboards with 9 chart types
 
 ### CLI
 
-1. Auth: `uv run python cli.py auth` → prints URL, user pastes code
-2. Sync: `uv run python cli.py sync` → full sync with progress
-3. Status: `uv run python cli.py status` → token + DB summary
+1. Auth: `uv run python cli.py auth` -> prints URL, user pastes code
+2. Sync: `uv run python cli.py sync` -> freshness check -> full sync with progress
+3. Status: `uv run python cli.py status` -> token + DB summary
 
 ---
 
@@ -127,132 +151,57 @@ Config is loaded from `.env` via `python-dotenv` in `core/config.py`. Paths are 
 
 ```
 main.py / cli.py
-    │
+    |
     ├── auth/manager.py (AuthManager)
     │       └── core/config, core/constants, utils/logger, utils/errors
-    │
+    |
     ├── ingestion/client.py (LinkedInClient)
     │       └── auth/manager, core/constants, utils/logger, utils/errors
-    │
+    |
     ├── ingestion/fetchers.py
     │       └── ingestion/client
-    │
+    |
     ├── ingestion/metrics.py
     │       └── ingestion/client
-    │
+    |
     ├── storage/snapshot.py
-    │       └── core/config
-    │
-    └── storage/repository.py
-            └── storage/database, utils/logger, utils/errors
+    │       └── core/config, models/api_models, utils/logger
+    |
+    ├── storage/repository.py
+    │       └── storage/database, models/db_models, core/config, utils/logger, utils/errors
+    |
+    └── storage/database.py
+            └── core/config
 ```
 
 ---
 
-## Sequence: User Action → Data Display
+## Sequence: User Action -> Data Display
 
-1. User clicks "Sync Now" → `main.py` route `/sync`
-2. `auth_manager.is_authenticated()` → `auth_manager.get_access_token()` if needed
-3. `LinkedInClient(auth_manager)` → uses token for API calls
-4. `fetch_ad_accounts`, `fetch_campaigns`, `fetch_creatives` → entities
-5. `fetch_campaign_metrics`, `fetch_creative_metrics`, `fetch_demographics` → analytics
-6. `assemble_snapshot(...)` → structured dict
-7. `save_snapshot_json(snapshot)` → JSON file
-8. `persist_snapshot(snapshot)` → SQLite
-9. Response rendered with sync log
+1. User clicks "Sync Now" -> `main.py` route `/sync`
+2. `should_sync(account_id)` -> check freshness gate (4-hour TTL)
+3. `start_sync_run(account_id)` -> log sync start
+4. `auth_manager.get_access_token()` -> auto-refresh if needed
+5. `LinkedInClient(auth_manager)` -> uses token for API calls
+6. `fetch_ad_accounts`, `fetch_campaigns`, `fetch_creatives` -> entities
+7. `fetch_campaign_metrics`, `fetch_creative_metrics`, `fetch_demographics` -> analytics
+8. `resolve_demographic_urns(client, demo_data)` -> human-readable names
+9. `assemble_snapshot(...)` -> Pydantic validation -> structured dict
+10. `save_snapshot_json(snapshot)` -> JSON file
+11. `persist_snapshot(snapshot)` -> SQLAlchemy upserts into SQLite
+12. `finish_sync_run(run_id)` -> update sync_log
+13. Response rendered with sync log
 
 ---
 
 ## Common Pitfalls
 
-- **Redirect URI mismatch**: Ensure `LINKEDIN_REDIRECT_URI` matches the LinkedIn app’s configured callback URL.
-- **Token expiry**: Access tokens expire after ~60 days; refresh uses `refresh_token`. If refresh fails, re‑authenticate.
+- **Redirect URI mismatch**: Ensure `LINKEDIN_REDIRECT_URI` matches the LinkedIn app's configured callback URL.
+- **Token expiry**: Access tokens expire after ~60 days; refresh uses `refresh_token`. If refresh fails, re-authenticate.
 - **Rate limiting**: 429 responses raise `RateLimitError`; check `Retry-After` header.
 - **Empty accounts**: If no ad accounts exist, sync returns empty data; verify LinkedIn app permissions and ads access.
-
----
-
-## Node.js Migration
-
-The LinkedIn Ads Action Center has been ported to Node.js/TypeScript. The Python codebase remains intact; the Node.js version lives under `node-app/` and provides equivalent functionality with a modern TypeScript stack.
-
-### Key Replacements
-
-| Python Component | Node.js Equivalent |
-|------------------|--------------------|
-| Flask web dashboard (`main.py`) | Fastify server (`node-app/src/server.ts`) |
-| Inline HTML templates | React single-page application (`node-app/frontend/src/`) |
-| FastAPI OAuth callback (`auth/callback.py`) | Fastify route handler within the same server |
-| `cli.py` (argparse) | Commander.js CLI (`node-app/src/cli.ts`) |
-
-### Updated System Components (Node.js)
-
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| **Auth** | `node-app/src/auth/` | OAuth 2.0 flow, token storage, refresh |
-| **Ingestion** | `node-app/src/ingestion/` | HTTP client, API fetchers, metrics |
-| **Storage** | `node-app/src/storage/` | Drizzle ORM schema, repository, snapshot assembly |
-| **Config** | `node-app/src/config.ts` | Env vars loaded via dotenv + zod validation |
-| **Web Dashboard** | `node-app/src/server.ts` | Fastify server serving the React SPA and API routes |
-| **Frontend** | `node-app/frontend/src/` | React SPA built with Vite |
-| **CLI** | `node-app/src/cli.ts` | Commander.js commands (`auth`, `sync`, `status`) |
-
-### Updated Data Flow (Node.js)
-
-```
-1. User initiates action (React SPA or CLI)
-       |
-2. AuthManager.getAccessToken()
-   - Loads tokens from tokens.json
-   - Auto-refreshes if expired (5 min buffer)
-       |
-3. Parallel fetching with Promise.all:
-   - fetchAdAccounts(client)
-   - For each account: fetchCampaigns(client, accountId)
-   - For each campaign: fetchCreatives(client, accountId, campaignIds)
-   - Promise.all([
-       fetchCampaignMetrics(client, campaignIds, dateStart, dateEnd),
-       fetchCreativeMetrics(client, campaignIds, dates),
-       fetchDemographics(client, campaignIds, dates)
-     ])
-       |
-4. assembleSnapshot()
-   - Same logic as Python, produces structured object
-   - Aggregates metrics, computes CTR, CPC, etc.
-       |
-5. Persistence
-   a) saveSnapshotJson(snapshot) -> data/snapshots/snapshot_YYYYMMDD.json
-   b) persistSnapshot(snapshot) -> data/linkedin_ads.db (SQLite via Drizzle)
-       |
-6. User sees results (React dashboard or CLI output)
-```
-
-### Node.js Config
-
-The same environment variables are used (`LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `LINKEDIN_REDIRECT_URI`, `OAUTH_STATE`). They are loaded via `dotenv` and validated at startup with `zod` schemas in `node-app/src/config.ts`. Paths for tokens, database, snapshots, and logs follow the same conventions as the Python version.
-
-### Node.js Dependencies
-
-| Layer | Technology |
-|-------|------------|
-| Package manager | npm |
-| Web server | Fastify |
-| ORM / Database | Drizzle (SQLite) |
-| Frontend framework | React |
-| Frontend build tool | Vite |
-| Language | TypeScript |
-| Logging | Pino |
-| Testing | Vitest |
-
-### Node.js File Locations
-
-| Area | Path |
-|------|------|
-| Backend source | `node-app/src/` |
-| Frontend source | `node-app/frontend/src/` |
-| Config | `node-app/src/config.ts` |
-| CLI entry point | `node-app/src/cli.ts` |
-| Server entry point | `node-app/src/server.ts` |
+- **Pydantic validation**: Invalid API records are logged and skipped (not raised). Check logs if data looks incomplete.
+- **Freshness gate**: Sync is skipped if data is less than 4 hours old. Pass `force=True` to override.
 
 ---
 
@@ -260,5 +209,8 @@ The same environment variables are used (`LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_
 
 - **Snapshot structure**: Designed for future LLM analysis; JSON schema is self-contained.
 - **Pagination**: `LinkedInClient.get_all_pages()` handles both offset and token-based pagination.
-- **Database**: SQLite with WAL mode; schema is applied on every `get_connection()`.
-- **Auth callback**: Web uses Flask’s `/callback`; CLI uses FastAPI `auth/callback.py` in a separate flow.
+- **Database**: SQLite with WAL mode; dual interface: `get_connection()` for legacy raw SQL, `get_session()` for SQLAlchemy ORM.
+- **Upserts**: `INSERT ON CONFLICT DO UPDATE` via SQLAlchemy Core — true upserts, no data loss.
+- **Two-layer validation**: API responses validated by Pydantic models (`models/api_models.py`), database writes use SQLModel (`models/db_models.py`).
+- **Auth callback**: Web uses Flask's `/callback`; CLI uses FastAPI `auth/callback.py` in a separate flow.
+- **Alembic**: Migrations managed via `alembic/`; initial migration matches the raw SQL schema in `database.py`.
